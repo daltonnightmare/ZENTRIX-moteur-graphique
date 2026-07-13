@@ -1,0 +1,12 @@
+[package]
+name = "ZENTRIX-moteur-graphique"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+winit = "0.30"
+wgpu = "22.1"
+pollster = "0.3"
+bytemuck = "1.14"  #cast memoire
+env_logger = "0.10" # logs wgpu
+ouroboros = "0.18"
