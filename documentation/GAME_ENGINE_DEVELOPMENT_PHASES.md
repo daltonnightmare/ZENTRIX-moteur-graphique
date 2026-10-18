@@ -1,628 +1,627 @@
-# Rust Game Engine Development Phases
+# Phases de développement d'un moteur de jeu en Rust
 
-## Purpose
+## Objectif
 
-This roadmap outlines a practical sequence for building a game engine in Rust. It is written for the engine maintainer or contributor who needs to decide what to build next, what to defer, and how to know when each phase is complete.
+Cette feuille de route décrit une séquence pratique pour construire un moteur de jeu en Rust. Elle est rédigée pour le mainteneur ou le contributeur du moteur qui doit décider quoi construire ensuite, quoi reporter, et comment savoir quand chaque phase est terminée.
 
-The plan favors a small playable vertical slice before broad engine features. A game engine becomes easier to design once it is forced to support an actual game loop, real assets, input, rendering, debugging, and iteration.
+Le plan privilégie une petite tranche verticale jouable avant les fonctionnalités étendues du moteur. Un moteur de jeu devient plus facile à concevoir une fois qu'il est contraint de supporter une boucle de jeu réelle, des actifs, des entrées, du rendu, du débogage et de l'itération.
 
-## Guiding Principles
+## Principes directeurs
 
-- Build the smallest engine that can ship a tiny game before expanding the feature set.
-- Keep engine systems modular, but avoid plugin abstractions until there are at least two real use cases.
-- Prefer data-oriented designs for hot paths such as transforms, rendering, physics, and animation.
-- Make tools and debug visibility part of the engine, not a polish pass at the end.
-- Treat performance, determinism, and asset iteration as design constraints from the start.
-- Validate each phase with a working demo, not only unit tests.
+- Construire le plus petit moteur capable de livrer un minuscule jeu avant d'étendre l'ensemble des fonctionnalités.
+- Garder les systèmes du moteur modulaires, mais éviter les abstractions de plugins tant qu'il n'y a pas au moins deux cas d'utilisation réels.
+- Privilégier les conceptions orientées données pour les chemins critiques tels que les transformations, le rendu, la physique et l'animation.
+- Intégrer les outils et la visibilité de débogage dans le moteur, et non comme une couche de finition finale.
+- Traiter la performance, le déterminisme et l'itération des actifs comme des contraintes de conception dès le départ.
+- Valider chaque phase avec une démo fonctionnelle, pas seulement avec des tests unitaires.
 
-## Phase 0: Vision, Scope, and Constraints
+## Phase 0 : Vision, périmètre et contraintes
 
-### Goal
+### Objectif
 
-Define what kind of engine you are building and what you are intentionally not building.
+Définir quel type de moteur vous construisez et ce que vous ne construisez pas intentionnellement.
 
-### Key Decisions
+### Décisions clés
 
-- Target game type: 2D, 3D, hybrid, simulation-heavy, narrative, action, editor-first, or code-first.
-- Target platforms: desktop first, web, mobile, console, or server/headless.
-- Rendering backend: Vulkan, Metal, DirectX, OpenGL, or an abstraction such as `wgpu`.
-- Engine style: ECS-first, scene graph, retained object model, or hybrid.
-- Tooling strategy: standalone editor, in-game debug UI, command-line tools, or library-only engine.
-- Scripting strategy: Rust-only, Lua, Rhai, WASM, or future extension point.
+- Type de jeu cible : 2D, 3D, hybride, à forte composante simulation, narratif, action, orienté éditeur, ou orienté code.
+- Plateformes cibles : bureau en premier, web, mobile, console, ou serveur/sans tête.
+- Moteur de rendu : Vulkan, Metal, DirectX, OpenGL, ou une abstraction comme `wgpu`.
+- Style de moteur : orienté ECS, graphe de scène, modèle d'objet retenu, ou hybride.
+- Stratégie d'outillage : éditeur autonome, interface de débogage dans le jeu, outils en ligne de commande, ou moteur sous forme de bibliothèque uniquement.
+- Stratégie de script : Rust uniquement, Lua, Rhai, WASM, ou point d'extension futur.
 
-### Deliverables
+### Livrables
 
-- One-page engine charter.
-- Initial repository structure.
-- Rust toolchain policy.
-- Coding standards and contribution rules.
-- Initial dependency policy.
+- Charte du moteur sur une page.
+- Structure initiale du dépôt.
+- Politique de la chaîne d'outils Rust.
+- Règles de codage et règles de contribution.
+- Politique de dépendances initiale.
 
-### Exit Criteria
+### Critères de sortie
 
-- The first demo target is clearly defined.
-- The target platforms and rendering strategy are chosen.
-- The first three phases can be implemented without reopening core direction debates.
+- La première cible de démonstration est clairement définie.
+- Les plateformes cibles et la stratégie de rendu sont choisies.
+- Les trois premières phases peuvent être implémentées sans rouvrir les débats sur l'orientation principale.
 
-## Phase 1: Foundation and Runtime Loop
+## Phase 1 : Fondation et boucle d'exécution
 
-### Goal
+### Objectif
 
-Create the minimal runtime that can open a window, process events, update state, and render a frame.
+Créer l'environnement d'exécution minimal qui peut ouvrir une fenêtre, traiter les événements, mettre à jour l'état et rendre une image.
 
-### Core Work
+### Travail principal
 
-- Application lifecycle.
-- Window creation and event handling.
-- Fixed and variable timestep strategy.
-- Main loop ownership model.
-- Logging and panic reporting.
-- Configuration loading.
-- Basic error handling patterns.
-- Feature flags for optional subsystems.
+- Cycle de vie de l'application.
+- Création de fenêtres et gestion des événements.
+- Stratégie de pas de temps fixe et variable.
+- Modèle de propriété de la boucle principale.
+- Journalisation et rapport de panique.
+- Chargement de la configuration.
+- Modèles de base de gestion des erreurs.
+- Indicateurs de fonctionnalités pour les sous-systèmes optionnels.
 
-### Recommended Rust Crates
+### Crates Rust recommandées
 
-- `winit` for windows and input events.
-- `tracing` for structured logging.
-- `anyhow` or `eyre` for application-level errors.
-- `thiserror` for library-level errors.
-- `serde` for configuration formats.
+- `winit` pour les fenêtres et les événements d'entrée.
+- `tracing` pour la journalisation structurée.
+- `anyhow` ou `eyre` pour les erreurs au niveau de l'application.
+- `thiserror` pour les erreurs au niveau de la bibliothèque.
+- `serde` pour les formats de configuration.
 
-### Deliverables
+### Livrables
 
-- A runnable application shell.
-- Frame timing metrics.
-- Graceful startup and shutdown.
-- Minimal runtime configuration file.
-- Headless mode, if server simulation or tests are a priority.
+- Une interface d'application exécutable.
+- Métriques de timing d'image.
+- Démarrage et arrêt gracieux.
+- Fichier de configuration d'exécution minimal.
+- Mode sans tête, si la simulation serveur ou les tests sont une priorité.
 
-### Exit Criteria
+### Critères de sortie
 
-- The engine can run a stable empty frame loop.
-- The engine reports frame time and lifecycle events.
-- Window, event, update, and render responsibilities are separated cleanly.
+- Le moteur peut exécuter une boucle d'image vide stable.
+- Le moteur rapporte le temps d'image et les événements du cycle de vie.
+- Les responsabilités de la fenêtre, des événements, de la mise à jour et du rendu sont clairement séparées.
 
-## Phase 2: Rendering Core
+## Phase 2 : Noyau de rendu
 
-### Goal
+### Objectif
 
-Render simple geometry reliably while establishing the architecture for future renderer growth.
+Rendre de la géométrie simple de manière fiable tout en établissant l'architecture pour la croissance future du moteur de rendu.
 
-### Core Work
+### Travail principal
 
-- GPU device and swapchain initialization.
-- Render graph or simple render pass abstraction.
-- Shader loading and compilation flow.
-- Mesh and buffer management.
-- Texture loading.
-- Camera model.
-- Material representation.
-- Basic 2D or 3D draw path.
-- Debug rendering for lines, grids, bounds, and labels.
+- Initialisation du périphérique GPU et de la swapchain.
+- Graphe de rendu ou abstraction de passe de rendu simple.
+- Flux de chargement et de compilation des shaders.
+- Gestion des maillages et des tampons.
+- Chargement des textures.
+- Modèle de caméra.
+- Représentation des matériaux.
+- Chemin de dessin 2D ou 3D de base.
+- Rendu de débogage pour les lignes, les grilles, les limites et les étiquettes.
 
-### Recommended Rust Crates
+### Crates Rust recommandées
 
-- `wgpu` for cross-platform graphics.
-- `image` for image loading.
-- `glam` for math.
-- `bytemuck` for safe buffer casts.
-- `naga` or shader tooling through `wgpu` for shader processing.
+- `wgpu` pour les graphismes multiplateformes.
+- `image` pour le chargement d'images.
+- `glam` pour les mathématiques.
+- `bytemuck` pour les conversions de tampons sûres.
+- `naga` ou outils de shader via `wgpu` pour le traitement des shaders.
 
-### Deliverables
+### Livrables
 
-- Clear-screen render pass.
-- Triangle or sprite rendering.
-- Camera-controlled scene.
-- Texture rendering.
-- Debug grid or primitive overlay.
-- Renderer documentation explaining resource lifetime and ownership.
+- Passe de rendu à écran clair.
+- Rendu de triangle ou de sprite.
+- Scène contrôlée par caméra.
+- Rendu de texture.
+- Grille de débogage ou superposition de primitives.
+- Documentation du moteur de rendu expliquant la durée de vie et la propriété des ressources.
 
-### Exit Criteria
+### Critères de sortie
 
-- The engine renders a scene every frame without validation errors.
-- Renderer resources can be created, reused, and destroyed predictably.
-- The debug renderer can visualize basic spatial information.
+- Le moteur rend une scène à chaque image sans erreurs de validation.
+- Les ressources du moteur de rendu peuvent être créées, réutilisées et détruites de manière prévisible.
+- Le moteur de rendu de débogage peut visualiser des informations spatiales de base.
 
-## Phase 3: ECS, Scene, and Transform Model
+## Phase 3 : ECS, scène et modèle de transformation
 
-### Goal
+### Objectif
 
-Define how game state is represented, queried, updated, serialized, and connected to rendering.
+Définir comment l'état du jeu est représenté, interrogé, mis à jour, sérialisé et connecté au rendu.
 
-### Core Work
+### Travail principal
 
-- Entity identity and lifetime.
-- Component storage.
-- System scheduling.
-- Transform hierarchy or flat transform model.
-- Scene loading and saving.
-- Prefab or archetype concept.
-- Runtime spawning and despawning.
-- Stable IDs for editor and asset references.
+- Identité et durée de vie des entités.
+- Stockage des composants.
+- Planification des systèmes.
+- Hiérarchie des transformations ou modèle de transformation plat.
+- Chargement et sauvegarde des scènes.
+- Concept de préfabriqué ou d'archétype.
+- Génération et suppression d'entités à l'exécution.
+- Identifiants stables pour les références de l'éditeur et des actifs.
 
-### Recommended Rust Crates
+### Crates Rust recommandées
 
-- `hecs`, `shipyard`, or `bevy_ecs` for ECS.
-- `serde` for scene serialization.
-- `uuid` or similar ID crate for stable asset/editor identifiers.
+- `hecs`, `shipyard`, ou `bevy_ecs` pour l'ECS.
+- `serde` pour la sérialisation des scènes.
+- `uuid` ou crate d'ID similaire pour les identifiants d'actifs/éditeur stables.
 
-### Deliverables
+### Livrables
 
-- Entities with transform components.
-- Renderable components connected to the renderer.
-- Scene serialization format.
-- Basic system scheduler.
-- Demo scene loaded from disk.
+- Entités avec composants de transformation.
+- Composants rendables connectés au moteur de rendu.
+- Format de sérialisation des scènes.
+- Planificateur de systèmes de base.
+- Scène de démonstration chargée depuis le disque.
 
-### Exit Criteria
+### Critères de sortie
 
-- A scene can be loaded, updated, rendered, and saved.
-- Entities can be spawned and removed at runtime.
-- Rendering does not depend on hard-coded demo objects.
+- Une scène peut être chargée, mise à jour, rendue et sauvegardée.
+- Des entités peuvent être générées et supprimées à l'exécution.
+- Le rendu ne dépend pas d'objets de démonstration codés en dur.
 
-## Phase 4: Asset Pipeline
+## Phase 4 : Pipeline des actifs
 
-### Goal
+### Objectif
 
-Build a repeatable path from source assets to runtime-ready engine assets.
+Construire un chemin reproductible des actifs sources aux actifs moteur prêts à l'exécution.
 
-### Core Work
+### Travail principal
 
-- Asset registry.
-- Asset handles.
-- Loading, caching, and unloading.
-- Hot reload for development.
-- Import steps for textures, meshes, shaders, fonts, audio, and scenes.
-- Asset dependency tracking.
-- Stable asset IDs.
-- Build-time asset packaging.
+- Registre des actifs.
+- Poignées d'actifs.
+- Chargement, mise en cache et déchargement.
+- Rechargement à chaud pour le développement.
+- Étapes d'importation pour les textures, les maillages, les shaders, les polices, l'audio et les scènes.
+- Suivi des dépendances des actifs.
+- Identifiants d'actifs stables.
+- Empaquetage des actifs au moment de la construction.
 
-### Recommended Rust Crates
+### Crates Rust recommandées
 
-- `notify` for file watching.
-- `serde` and `ron`, `toml`, or `json5` for metadata.
-- `gltf` for 3D asset import.
-- `rusttype`, `ab_glyph`, or similar crates for fonts.
+- `notify` pour la surveillance des fichiers.
+- `serde` et `ron`, `toml`, ou `json5` pour les métadonnées.
+- `gltf` pour l'importation d'actifs 3D.
+- `rusttype`, `ab_glyph`, ou des crates similaires pour les polices.
 
-### Deliverables
+### Livrables
 
-- Asset manifest format.
-- Runtime asset manager.
-- Hot reload for at least shaders and textures.
-- Import command-line tool.
-- Missing-asset fallback behavior.
+- Format du manifeste des actifs.
+- Gestionnaire d'actifs à l'exécution.
+- Rechargement à chaud pour au moins les shaders et les textures.
+- Outil en ligne de commande pour l'importation.
+- Comportement de repli pour les actifs manquants.
 
-### Exit Criteria
+### Critères de sortie
 
-- Assets can be referenced by stable handles rather than raw paths.
-- A changed asset can update in a running debug build.
-- Packaged assets can be loaded without depending on the source directory layout.
+- Les actifs peuvent être référencés par des poignées stables plutôt que par des chemins bruts.
+- Un actif modifié peut être mis à jour dans une version de débogage en cours d'exécution.
+- Les actifs empaquetés peuvent être chargés sans dépendre de la structure du répertoire source.
 
-## Phase 5: Input, Cameras, and Interaction
+## Phase 5 : Entrées, caméras et interaction
 
-### Goal
+### Objectif
 
-Make the engine usable for real gameplay input across devices and control schemes.
+Rendre le moteur utilisable pour les entrées de jeu réelles sur différents appareils et schémas de contrôle.
 
-### Core Work
+### Travail principal
 
-- Keyboard, mouse, and controller input.
-- Action mapping layer.
-- Input contexts.
-- Cursor capture and pointer locking.
-- Camera controllers.
-- Text input support.
-- Input recording hooks for tests and replays.
+- Entrée clavier, souris et manette.
+- Couche de mappage des actions.
+- Contextes d'entrée.
+- Capture du curseur et verrouillage du pointeur.
+- Contrôleurs de caméra.
+- Support de la saisie de texte.
+- Points d'accroche pour l'enregistrement des entrées pour les tests et les relectures.
 
-### Recommended Rust Crates
+### Crates Rust recommandées
 
-- `gilrs` for gamepad support.
-- `winit` event data for keyboard and mouse.
-- `serde` for input binding files.
+- `gilrs` pour le support des manettes de jeu.
+- Données d'événements `winit` pour le clavier et la souris.
+- `serde` pour les fichiers de liaison des entrées.
 
-### Deliverables
+### Livrables
 
-- Configurable input bindings.
-- Runtime input state queries.
-- Example free camera or 2D camera controller.
-- Input debug overlay.
+- Liaisons d'entrée configurables.
+- Requêtes d'état d'entrée à l'exécution.
+- Exemple de caméra libre ou de contrôleur de caméra 2D.
+- Superposition de débogage des entrées.
 
-### Exit Criteria
+### Critères de sortie
 
-- Gameplay code can ask for actions instead of raw keys.
-- Bindings can be changed without recompiling.
-- Input behavior is visible enough to debug quickly.
+- Le code du jeu peut demander des actions au lieu de touches brutes.
+- Les liaisons peuvent être modifiées sans recompilation.
+- Le comportement des entrées est suffisamment visible pour être débogué rapidement.
 
-## Phase 6: Gameplay Framework and First Vertical Slice
+## Phase 6 : Cadre de jeu et première tranche verticale
 
-### Goal
+### Objectif
 
-Use the engine to build a tiny playable game slice and expose the missing engine requirements.
+Utiliser le moteur pour construire une minuscule tranche de jeu jouable et exposer les exigences manquantes du moteur.
 
-### Core Work
+### Travail principal
 
-- Game state transitions.
-- Basic UI flow.
-- Save/load strategy, if relevant.
-- Collision or physics placeholder.
-- Audio placeholder.
-- Entity spawning and gameplay rules.
-- Minimal content pipeline for the slice.
+- Transitions d'état du jeu.
+- Flux d'interface utilisateur de base.
+- Stratégie de sauvegarde/chargement, si pertinente.
+- Collision ou espace réservé pour la physique.
+- Espace réservé pour l'audio.
+- Génération d'entités et règles de jeu.
+- Pipeline de contenu minimal pour la tranche.
 
-### Deliverables
+### Livrables
 
-- A playable demo with a start, loop, and end condition.
-- One real level or test arena.
-- Debug controls for reset, pause, step, and reload.
-- List of engine pain points discovered during gameplay implementation.
+- Une démo jouable avec une condition de début, de boucle et de fin.
+- Un vrai niveau ou une arène de test.
+- Contrôles de débogage pour la réinitialisation, la pause, l'avance pas à pas et le rechargement.
+- Liste des points douloureux du moteur découverts lors de l'implémentation du gameplay.
 
-### Exit Criteria
+### Critères de sortie
 
-- The demo is playable from a clean checkout.
-- The engine supports gameplay without special-case demo code in core systems.
-- The next engine priorities are based on observed friction, not speculation.
+- La démo est jouable à partir d'une extraction propre.
+- Le moteur prend en charge le gameplay sans code de démonstration spécial dans les systèmes principaux.
+- Les prochaines priorités du moteur sont basées sur les frictions observées, et non sur des spéculations.
 
-## Phase 7: Physics and Collision
+## Phase 7 : Physique et collision
 
-### Goal
+### Objectif
 
-Add reliable spatial queries, collision detection, and physics appropriate to the target game type.
+Ajouter des requêtes spatiales fiables, la détection de collision et une physique adaptée au type de jeu cible.
 
-### Core Work
+### Travail principal
 
-- Collider components.
-- Broadphase and narrowphase collision.
-- Trigger volumes.
-- Raycasts and shape casts.
-- Rigid body dynamics, if needed.
-- Character movement support.
-- Collision layers and masks.
-- Debug visualization.
+- Composants de collisionneur.
+- Détection de collision à large phase et à phase étroite.
+- Volumes de déclenchement.
+- Raycasts et casts de forme.
+- Dynamique des corps rigides, si nécessaire.
+- Support du mouvement des personnages.
+- Couches de collision et masques.
+- Visualisation de débogage.
 
-### Recommended Rust Crates
+### Crates Rust recommandées
 
-- `rapier2d` or `rapier3d` for physics.
-- `parry2d` or `parry3d` for collision queries.
+- `rapier2d` ou `rapier3d` pour la physique.
+- `parry2d` ou `parry3d` pour les requêtes de collision.
 
-### Deliverables
+### Livrables
 
-- Static and dynamic colliders.
-- Collision events.
-- Spatial query API.
-- Physics debug view.
-- Deterministic fixed-step physics update.
+- Collisionneurs statiques et dynamiques.
+- Événements de collision.
+- API de requête spatiale.
+- Vue de débogage de la physique.
+- Mise à jour physique à pas fixe déterministe.
 
-### Exit Criteria
+### Critères de sortie
 
-- Gameplay code can query and react to collisions without depending on renderer state.
-- Physics runs at a stable fixed timestep.
-- Collision behavior can be inspected visually.
+- Le code du jeu peut interroger les collisions et y réagir sans dépendre de l'état du moteur de rendu.
+- La physique s'exécute à un pas de temps fixe stable.
+- Le comportement de collision peut être inspecté visuellement.
 
-## Phase 8: Audio
+## Phase 8 : Audio
 
-### Goal
+### Objectif
 
-Support sound effects, music, spatial playback, and runtime control.
+Prendre en charge les effets sonores, la musique, la lecture spatiale et le contrôle à l'exécution.
 
-### Core Work
+### Travail principal
 
-- Audio device initialization.
-- Sound asset loading.
-- One-shot and looping playback.
-- Volume groups.
-- Spatial audio, if needed.
-- Streaming music.
-- Debug controls for active sounds.
+- Initialisation du périphérique audio.
+- Chargement des actifs sonores.
+- Lecture unique et en boucle.
+- Groupes de volume.
+- Audio spatial, si nécessaire.
+- Musique en streaming.
+- Contrôles de débogage pour les sons actifs.
 
-### Recommended Rust Crates
+### Crates Rust recommandées
 
-- `kira` for higher-level audio playback.
-- `rodio` for simpler playback needs.
+- `kira` pour la lecture audio de plus haut niveau.
+- `rodio` pour des besoins de lecture plus simples.
 
-### Deliverables
+### Livrables
 
-- Sound effect playback.
-- Music playback.
-- Mixer groups.
-- Audio asset handles.
-- Runtime mute and volume controls.
+- Lecture d'effets sonores.
+- Lecture de musique.
+- Groupes de mixage.
+- Poignées d'actifs audio.
+- Commandes de coupure et de volume à l'exécution.
 
-### Exit Criteria
+### Critères de sortie
 
-- The vertical slice can use audio entirely through engine APIs.
-- Audio resources follow the same asset ownership model as other assets.
-- Playback can be controlled and debugged at runtime.
+- La tranche verticale peut utiliser l'audio entièrement via les API du moteur.
+- Les ressources audio suivent le même modèle de propriété que les autres actifs.
+- La lecture peut être contrôlée et déboguée à l'exécution.
 
-## Phase 9: UI and Text
+## Phase 9 : Interface utilisateur et texte
 
-### Goal
+### Objectif
 
-Provide the UI needed for game menus, debug tools, overlays, and editor panels.
+Fournir l'interface utilisateur nécessaire pour les menus du jeu, les outils de débogage, les superpositions et les panneaux de l'éditeur.
 
-### Core Work
+### Travail principal
 
-- Text shaping and rendering.
-- Immediate-mode debug UI.
-- Runtime/game UI model.
-- Layout primitives.
-- Input focus.
-- Theming and style data.
-- Localization-ready text identifiers, if needed.
+- Mise en forme et rendu du texte.
+- Interface utilisateur de débogage en mode immédiat.
+- Modèle d'interface utilisateur de jeu/exécution.
+- Primitives de mise en page.
+- Focus des entrées.
+- Thèmes et données de style.
+- Identifiants de texte prêts pour la localisation, si nécessaire.
 
-### Recommended Rust Crates
+### Crates Rust recommandées
 
-- `egui` for debug tools and editor panels.
-- `cosmic-text` or similar text shaping crates for more advanced text.
+- `egui` pour les outils de débogage et les panneaux de l'éditeur.
+- `cosmic-text` ou des crates de mise en forme de texte similaires pour un texte plus avancé.
 
-### Deliverables
+### Livrables
 
-- Debug inspector overlay.
-- Basic menu screen.
-- Text rendering path.
-- Runtime UI input handling.
+- Superposition d'inspecteur de débogage.
+- Écran de menu de base.
+- Chemin de rendu de texte.
+- Gestion des entrées de l'interface utilisateur à l'exécution.
 
-### Exit Criteria
+### Critères de sortie
 
-- The engine can display debug state and gameplay UI.
-- UI input and gameplay input can coexist without conflict.
-- Text is rendered through a reusable system, not one-off debug drawing.
+- Le moteur peut afficher l'état de débogage et l'interface utilisateur du jeu.
+- Les entrées de l'interface utilisateur et les entrées du jeu peuvent coexister sans conflit.
+- Le texte est rendu via un système réutilisable, et non par un dessin de débogage ponctuel.
 
-## Phase 10: Editor and Tooling
+## Phase 10 : Éditeur et outillage
 
-### Goal
+### Objectif
 
-Improve iteration speed by making scenes, assets, entities, and runtime state inspectable and editable.
+Améliorer la vitesse d'itération en rendant les scènes, les actifs, les entités et l'état d'exécution inspectables et modifiables.
 
-### Core Work
+### Travail principal
 
-- Entity hierarchy view.
-- Component inspector.
-- Scene save/load integration.
-- Asset browser.
-- Transform gizmos.
-- Play/edit mode boundary.
-- Undo and redo model.
-- Editor-only components or metadata.
+- Vue hiérarchique des entités.
+- Inspecteur de composants.
+- Intégration du chargement/sauvegarde des scènes.
+- Navigateur d'actifs.
+- Gizmos de transformation.
+- Frontière entre les modes de jeu et d'édition.
+- Modèle d'annulation et de rétablissement.
+- Composants ou métadonnées réservés à l'éditeur.
 
-### Deliverables
+### Livrables
 
-- In-engine editor or companion editor application.
-- Inspector for entities and components.
-- Scene editing and saving.
-- Asset browser.
-- Basic undo and redo.
+- Éditeur intégré au moteur ou application éditrice compagnon.
+- Inspecteur pour les entités et les composants.
+- Édition et sauvegarde des scènes.
+- Navigateur d'actifs.
+- Annulation et rétablissement de base.
 
-### Exit Criteria
+### Critères de sortie
 
-- A simple scene can be built without editing raw scene files by hand.
-- Runtime and editor state boundaries are explicit.
-- Editor changes serialize back into the same scene format used by the runtime.
+- Une scène simple peut être construite sans modifier manuellement les fichiers de scène bruts.
+- Les limites entre l'état d'exécution et l'état de l'éditeur sont explicites.
+- Les modifications de l'éditeur sont sérialisées dans le même format de scène utilisé par l'exécution.
 
-## Phase 11: Animation
+## Phase 11 : Animation
 
-### Goal
+### Objectif
 
-Support the animation model required by the engine's target game type.
+Prendre en charge le modèle d'animation requis par le type de jeu cible du moteur.
 
-### Core Work
+### Travail principal
 
-- Sprite animation or skeletal animation.
-- Animation clips.
-- Animation state machines or blend trees.
-- Event markers.
-- Retargeting, if needed.
-- Animation preview tooling.
+- Animation de sprite ou animation squelettique.
+- Clips d'animation.
+- Machines d'état d'animation ou arbres de mélange.
+- Marqueurs d'événements.
+- Retargeting, si nécessaire.
+- Outillage de prévisualisation d'animation.
 
-### Deliverables
+### Livrables
 
-- Animation asset format.
-- Runtime animation player.
-- Animation-driven entity demo.
-- Debug visualization for current clips and states.
+- Format d'actif d'animation.
+- Lecteur d'animation à l'exécution.
+- Démo d'entité pilotée par animation.
+- Visualisation de débogage pour les clips et les états actuels.
 
-### Exit Criteria
+### Critères de sortie
 
-- Gameplay can trigger and observe animation state.
-- Animation data is loaded through the asset pipeline.
-- Animated entities work in the vertical slice without bespoke code.
+- Le gameplay peut déclencher et observer l'état de l'animation.
+- Les données d'animation sont chargées via le pipeline d'actifs.
+- Les entités animées fonctionnent dans la tranche verticale sans code sur mesure.
 
-## Phase 12: Performance, Memory, and Parallelism
+## Phase 12 : Performance, mémoire et parallélisme
 
-### Goal
+### Objectif
 
-Make performance measurable, predictable, and good enough for the target game.
+Rendre la performance mesurable, prévisible et suffisamment bonne pour le jeu cible.
 
-### Core Work
+### Travail principal
 
-- Frame profiler.
-- Memory tracking.
-- Job system or task scheduler.
-- Parallel system execution where safe.
-- Renderer batching.
-- Asset streaming.
-- ECS query optimization.
-- Allocation reduction in hot paths.
+- Profileur d'images.
+- Suivi de la mémoire.
+- Système de tâches ou planificateur de tâches.
+- Exécution parallèle des systèmes lorsque c'est sûr.
+- Regroupement (batching) du moteur de rendu.
+- Streaming des actifs.
+- Optimisation des requêtes ECS.
+- Réduction des allocations dans les chemins critiques.
 
-### Recommended Rust Crates
+### Crates Rust recommandées
 
-- `rayon` for data parallelism.
-- `puffin` or `tracy-client` for profiling.
-- `slotmap`, `generational-arena`, or similar crates for stable handles.
+- `rayon` pour le parallélisme des données.
+- `puffin` ou `tracy-client` pour le profilage.
+- `slotmap`, `generational-arena`, ou des crates similaires pour les poignées stables.
 
-### Deliverables
+### Livrables
 
-- Profiling integration.
-- Performance budgets for CPU, GPU, memory, and asset loading.
-- Stress test scenes.
-- Documented hot-path allocation rules.
+- Intégration du profilage.
+- Budgets de performance pour le CPU, le GPU, la mémoire et le chargement des actifs.
+- Scènes de test de charge.
+- Règles d'allocation pour les chemins critiques documentées.
 
-### Exit Criteria
+### Critères de sortie
 
-- The engine can identify where frame time is spent.
-- Stress scenes expose performance limits.
-- Hot systems avoid avoidable per-frame allocations.
+- Le moteur peut identifier où le temps d'image est passé.
+- Les scènes de charge révèlent les limites de performance.
+- Les systèmes critiques évitent les allocations par image évitables.
 
-## Phase 13: Packaging, Platform Support, and Distribution
+## Phase 13 : Empaquetage, support des plateformes et distribution
 
-### Goal
+### Objectif
 
-Make engine demos and games reproducible outside the development environment.
+Rendre les démos et les jeux du moteur reproductibles en dehors de l'environnement de développement.
 
-### Core Work
+### Travail principal
 
-- Build profiles.
-- Asset packaging.
-- Platform-specific window, filesystem, and input behavior.
-- Crash reporting strategy.
-- Version metadata.
-- Release automation.
-- Installer or archive packaging.
+- Profils de construction.
+- Empaquetage des actifs.
+- Comportement spécifique à la plateforme pour les fenêtres, le système de fichiers et les entrées.
+- Stratégie de rapport de crash.
+- Métadonnées de version.
+- Automatisation des versions.
+- Empaquetage pour installateur ou archive.
 
-### Deliverables
+### Livrables
 
-- Release build command.
-- Packaged demo.
-- Platform smoke tests.
-- Asset bundle validation.
-- Basic release checklist.
+- Commande de construction de version.
+- Démo empaquetée.
+- Tests de validation sur les plateformes cibles.
+- Validation des bundles d'actifs.
+- Liste de contrôle de base pour les versions.
 
-### Exit Criteria
+### Critères de sortie
 
-- A clean machine can run a packaged demo.
-- Missing assets and startup failures produce useful errors.
-- Release builds are reproducible.
+- Une machine propre peut exécuter une démo empaquetée.
+- Les actifs manquants et les échecs de démarrage produisent des erreurs utiles.
+- Les versions de production sont reproductibles.
 
-## Phase 14: Stability, Testing, and Long-Term Maintenance
+## Phase 14 : Stabilité, tests et maintenance à long terme
 
-### Goal
+### Objectif
 
-Turn the engine from an experiment into a maintainable codebase.
+Transformer le moteur d'une expérience en une base de code maintenable.
 
-### Core Work
+### Travail principal
 
-- Unit tests for pure logic.
-- Integration tests for asset loading, scene loading, and serialization.
-- Golden tests for asset import results.
-- Render tests where practical.
-- API stability rules.
-- Deprecation policy.
-- Fuzzing for parsers and importers.
-- Documentation for engine contributors.
+- Tests unitaires pour la logique pure.
+- Tests d'intégration pour le chargement des actifs, le chargement des scènes et la sérialisation.
+- Tests de régression visuelle (golden tests) pour les résultats d'importation des actifs.
+- Tests de rendu lorsque cela est pratique.
+- Règles de stabilité de l'API.
+- Politique de dépréciation.
+- Fuzzing pour les analyseurs syntaxiques et les importateurs.
+- Documentation pour les contributeurs du moteur.
 
-### Recommended Rust Crates
+### Crates Rust recommandées
 
-- `insta` for snapshot tests.
-- `proptest` for property-based tests.
-- `cargo-fuzz` for fuzzing.
-- `criterion` for benchmarks.
+- `insta` pour les tests instantanés.
+- `proptest` pour les tests basés sur les propriétés.
+- `cargo-fuzz` pour le fuzzing.
+- `criterion` pour les benchmarks.
 
-### Deliverables
+### Livrables
 
-- Test suite grouped by subsystem.
-- Benchmark suite for hot paths.
-- Contributor guide.
-- Engine architecture overview.
-- Release notes process.
+- Suite de tests regroupés par sous-système.
+- Suite de benchmarks pour les chemins critiques.
+- Guide du contributeur.
+- Aperçu de l'architecture du moteur.
+- Processus de notes de version.
 
-### Exit Criteria
+### Critères de sortie
 
-- Core systems have tests that catch regressions.
-- Engine APIs have clear ownership and compatibility expectations.
-- New contributors can understand how to add a feature without reading the entire codebase.
+- Les systèmes principaux ont des tests qui détectent les régressions.
+- Les API du moteur ont des attentes claires en matière de propriété et de compatibilité.
+- Les nouveaux contributeurs peuvent comprendre comment ajouter une fonctionnalité sans lire l'intégralité de la base de code.
 
-## Suggested Milestones
+## Jalons suggérés
 
-### Milestone 1: Empty Engine
+### Jalon 1 : Moteur vide
 
-Includes phases 0 and 1.
+Inclut les phases 0 et 1.
 
-Result: a windowed application with a stable runtime loop, logging, configuration, and frame timing.
+Résultat : une application fenêtrée avec une boucle d'exécution stable, une journalisation, une configuration et un timing d'image.
 
-### Milestone 2: Rendered Scene
+### Jalon 2 : Scène rendue
 
-Includes phases 2 and 3.
+Inclut les phases 2 et 3.
 
-Result: a scene loaded from disk with entities, transforms, camera control, and rendered objects.
+Résultat : une scène chargée depuis le disque avec des entités, des transformations, un contrôle de caméra et des objets rendus.
 
-### Milestone 3: Asset-Driven Demo
+### Jalon 3 : Démo pilotée par les actifs
 
-Includes phases 4 and 5.
+Inclut les phases 4 et 5.
 
-Result: assets load through handles, shaders or textures hot reload, and input is configurable.
+Résultat : les actifs se chargent via des poignées, les shaders ou les textures se rechargent à chaud, et les entrées sont configurables.
 
-### Milestone 4: First Playable Slice
+### Jalon 4 : Première tranche jouable
 
-Includes phase 6 plus minimal versions of physics, audio, and UI.
+Inclut la phase 6 ainsi que des versions minimales de la physique, de l'audio et de l'interface utilisateur.
 
-Result: a tiny game that proves the engine can support real gameplay.
+Résultat : un minuscule jeu qui prouve que le moteur peut supporter un gameplay réel.
 
-### Milestone 5: Usable Tooling
+### Jalon 5 : Outillage utilisable
 
-Includes phases 9 and 10.
+Inclut les phases 9 et 10.
 
-Result: debug UI, inspection, scene editing, and faster iteration.
+Résultat : interface de débogage, inspection, édition de scène et itération plus rapide.
 
-### Milestone 6: Production Hardening
+### Jalon 6 : Renforcement pour la production
 
-Includes phases 11 through 14.
+Inclut les phases 11 à 14.
 
-Result: animation, profiling, packaging, tests, and maintainability practices.
+Résultat : animation, profilage, empaquetage, tests et pratiques de maintenabilité.
 
-## Recommended First Demo
+## Première démo recommandée
 
-Choose a very small game that stresses the whole engine without requiring advanced content.
+Choisissez un très petit jeu qui sollicite l'ensemble du moteur sans nécessiter de contenu avancé.
 
-Good options:
+Bonnes options :
 
-- 2D top-down arena with movement, enemies, collision, audio, UI, and particles.
-- 3D first-person test room with camera movement, static meshes, collision, lighting, and interaction.
-- Puzzle prototype with scene loading, UI, save state, animation, and editor needs.
+- Arène 2D vue de dessus avec mouvement, ennemis, collision, audio, interface utilisateur et particules.
+- Salle de test 3D à la première personne avec mouvement de caméra, maillages statiques, collision, éclairage et interaction.
+- Prototype de puzzle avec chargement de scène, interface utilisateur, état de sauvegarde, animation et besoins d'éditeur.
 
-Avoid starting with an open world, multiplayer game, advanced physics sandbox, or full editor. Those are useful long-term tests, but they hide basic engine problems under too much scope.
+Évitez de commencer par un monde ouvert, un jeu multijoueur, un bac à sable physique avancé ou un éditeur complet. Ce sont des tests utiles à long terme, mais ils masquent les problèmes fondamentaux du moteur sous trop de périmètre.
 
-## Early Architecture Checklist
+## Liste de contrôle de l'architecture précoce
 
-- Runtime systems can run without editor-only code.
-- Assets are referenced through handles, not raw file paths.
-- Renderer, physics, audio, and UI do not own gameplay state.
-- Hot paths avoid unnecessary heap allocation.
-- Debug views exist for invisible systems.
-- Serialization has stable IDs and versioning plans.
-- Each subsystem has a minimal demo that can be run independently.
-- The engine has one main vertical slice that proves all core systems work together.
+- Les systèmes d'exécution peuvent fonctionner sans code réservé à l'éditeur.
+- Les actifs sont référencés via des poignées, et non par des chemins de fichiers bruts.
+- Le moteur de rendu, la physique, l'audio et l'interface utilisateur ne possèdent pas l'état du jeu.
+- Les chemins critiques évitent les allocations de tas inutiles.
+- Des vues de débogage existent pour les systèmes invisibles.
+- La sérialisation a des identifiants stables et des plans de versionnement.
+- Chaque sous-système a une démo minimale qui peut être exécutée indépendamment.
+- Le moteur a une tranche verticale principale qui prouve que tous les systèmes principaux fonctionnent ensemble.
 
-## What to Defer
+## Ce qu'il faut reporter
 
-- Full visual scripting.
-- Multiplayer replication.
-- Console platform support.
-- Complex material editor.
-- Advanced global illumination.
-- Full terrain tooling.
-- General-purpose plugin marketplace.
-- Custom physics engine.
-- Custom renderer backend abstraction.
+- Scripting visuel complet.
+- Réplication multijoueur.
+- Support des plateformes consoles.
+- Éditeur de matériaux complexe.
+- Illumination globale avancée.
+- Outillage complet de terrain.
+- Marché de plugins à usage général.
+- Moteur physique personnalisé.
+- Abstraction de moteur de rendu personnalisée.
 
-These may become valuable later, but they are expensive before the first playable slice proves the engine's real requirements.
+Ces éléments peuvent devenir précieux plus tard, mais ils sont coûteux avant que la première tranche jouable ne prouve les véritables exigences du moteur.
 
-## Phase Review Template
+## Modèle de revue de phase
 
-Use this checklist at the end of each phase:
+Utilisez cette liste de contrôle à la fin de chaque phase :
 
-- What demo proves this phase works?
-- What engine API did gameplay code use?
-- What debug view explains the subsystem at runtime?
-- What data can be loaded from disk instead of hard-coded?
-- What performance budget applies?
-- What tests or smoke checks protect the behavior?
-- What did this phase reveal about the next phase?
+- Quelle démo prouve que cette phase fonctionne ?
+- Quelle API du moteur le code du jeu a-t-il utilisée ?
+- Quelle vue de débogage explique le sous-système à l'exécution ?
+- Quelles données peuvent être chargées depuis le disque au lieu d'être codées en dur ?
+- Quel budget de performance s'applique ?
+- Quels tests ou vérifications rapides protègent le comportement ?
+- Qu'est-ce que cette phase a révélé à propos de la phase suivante ?
 
-## Immediate Next Steps
+## Prochaines étapes immédiates
 
-1. Write the engine charter from Phase 0.
-2. Choose the first demo target.
-3. Create the Rust workspace.
-4. Build the Phase 1 runtime loop.
-5. Render the first visible object as soon as possible.
-
+1. Rédiger la charte du moteur à partir de la Phase 0.
+2. Choisir la première cible de démonstration.
+3. Créer l'espace de travail Rust.
+4. Construire la boucle d'exécution de la Phase 1.
+5. Rendre le premier objet visible dès que possible.

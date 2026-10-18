@@ -1,0 +1,13 @@
+[package]
+name = "zentrix-render"
+description = "Rendu haut niveau de ZENTRIX : passes, pipelines, shaders, maillages."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+zentrix-core = { workspace = true }
+# wgpu est utilisé via `zentrix_rhi::wgpu` (ré-export) : pas besoin de le déclarer ici.
+zentrix-rhi = { workspace = true }
+bytemuck = { workspace = true }
+log = { workspace = true }

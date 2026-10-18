@@ -1,1 +1,9 @@
+# Dossier de compilation généré par Cargo (peut peser plusieurs Go) — ne jamais le versionner.
 /target
+
+# Fichiers d'éditeurs / système
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

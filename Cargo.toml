@@ -1,12 +1,69 @@
-[package]
-name = "ZENTRIX-moteur-graphique"
+# =============================================================================
+#  Cargo.toml RACINE — le "workspace" (espace de travail) ZENTRIX
+# =============================================================================
+#
+# Ce fichier ne décrit PAS un programme : il regroupe plusieurs "crates"
+# (bibliothèques ou exécutables Rust) qui sont compilées ensemble.
+# Avantages :
+#   - un seul dossier `target/` partagé  -> compilations beaucoup plus rapides ;
+#   - un seul `Cargo.lock`               -> toutes les crates utilisent les mêmes versions ;
+#   - des versions de dépendances déclarées UNE seule fois (section plus bas).
+#
+# Voir documentation/guide-debutant/03-cargo-et-workspace.md pour les détails.
+
+[workspace]
+# Le "resolver" 3 est l'algorithme moderne de résolution des dépendances
+# (par défaut avec l'édition 2024).
+resolver = "3"
+
+# Liste des crates qui font partie du workspace.
+# L'ordre n'a pas d'importance : Cargo calcule lui-même l'ordre de compilation.
+members = [
+    "crates/zentrix-core",      # types de base (couleurs, temps)       — aucune dépendance GPU
+    "crates/zentrix-platform",  # fenêtre + boucle d'événements          — enveloppe winit
+    "crates/zentrix-rhi",       # accès bas niveau au GPU                — enveloppe wgpu
+    "crates/zentrix-render",    # rendu haut niveau (pipelines, shaders) — utilise le RHI
+    "crates/zentrix-app",       # l'exécutable qui assemble tout
+]
+
+# Métadonnées partagées : chaque crate peut écrire `version.workspace = true`
+# pour hériter de ces valeurs au lieu de les répéter.
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+authors = ["daltonnightmare"]
 
-[dependencies]
-winit = "0.30"
-wgpu = "22.1"
-pollster = "0.3"
-bytemuck = "1.14"  #cast memoire
-env_logger = "0.10" # logs wgpu
-ouroboros = "0.18"
+# Versions des dépendances externes, centralisées ici.
+# Dans une crate, on écrit ensuite simplement : `wgpu = { workspace = true }`.
+[workspace.dependencies]
+# --- Nos propres crates (chemins locaux) ---
+zentrix-core     = { path = "crates/zentrix-core" }
+zentrix-platform = { path = "crates/zentrix-platform" }
+zentrix-rhi      = { path = "crates/zentrix-rhi" }
+zentrix-render   = { path = "crates/zentrix-render" }
+
+# --- Fenêtre et événements ---
+winit = "0.30"          # crée la fenêtre, reçoit clavier/souris/redimensionnement
+
+# --- GPU ---
+wgpu = "30"             # API graphique portable (Vulkan / DirectX 12 / Metal / WebGPU)
+pollster = "1"          # permet d'attendre une fonction `async` sans runtime async complet
+bytemuck = { version = "1", features = ["derive"] }  # convertit nos structs en octets pour le GPU
+
+# --- Mathématiques ---
+glam = { version = "0.34", features = ["bytemuck"] } # vecteurs / matrices (servira pour la caméra)
+
+# --- Journalisation (logs) ---
+log = "0.4"             # "façade" : les crates écrivent `log::info!(...)`
+env_logger = "0.11"     # implémentation : affiche les logs dans le terminal
+
+# --- Gestion des erreurs ---
+anyhow = "1"            # erreurs "faciles" pour les applications
+thiserror = "2"         # erreurs typées et précises pour les bibliothèques
+
+# Profil de compilation "dev" (cargo build / cargo run) :
+# on optimise un peu les DÉPENDANCES (wgpu, winit...) car elles sont très lentes
+# sans optimisation, tout en gardant NOTRE code non optimisé pour compiler vite
+# et déboguer facilement.
+[profile.dev.package."*"]
+opt-level = 2

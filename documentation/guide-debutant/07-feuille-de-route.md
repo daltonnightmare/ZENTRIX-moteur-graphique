@@ -1,0 +1,115 @@
+# Chapitre 7 — Feuille de route : la suite de ZENTRIX
+
+**Objectif** : savoir quoi construire ensuite, dans quel ordre, et où le placer dans l'architecture.
+
+Ce chapitre relie la base actuelle aux documents de conception : [GAME_ENGINE_DEVELOPMENT_PHASES.md](../GAME_ENGINE_DEVELOPMENT_PHASES.md) (les phases) et [crates.md](../crates.md) (le découpage en crates).
+
+---
+
+## Où en est-on ?
+
+| Phase (voir GAME_ENGINE_DEVELOPMENT_PHASES.md) | État |
+|------------------------------------------------|------|
+| **Phase 0** — Vision, périmètre | ✅ Rust + wgpu, bureau d'abord, workspace multi-crates |
+| **Phase 1** — Fondation et boucle d'exécution | ✅ fenêtre, événements, delta time, FPS, logs, arrêt propre · ⏳ fichier de configuration |
+| **Phase 2** — Noyau de rendu | 🟡 **en cours** : GPU + surface + pipeline + vertex buffer ✅ · index buffer, caméra, textures, debug ⏳ |
+| Phase 3+ — ECS, assets, entrées... | ⏳ à venir |
+
+---
+
+## Les prochaines étapes, dans l'ordre conseillé
+
+Chaque étape produit quelque chose de **visible**, ce qui permet de valider qu'elle fonctionne. C'est le principe « valider chaque phase avec une démo fonctionnelle ».
+
+### Étape A — Maillages (`Mesh`) ⭐⭐
+
+- Faire l'[exercice 4](06-exercices.md#exercice-4--un-carré-avec-un-index-buffer) (index buffer).
+- Créer `crates/zentrix-render/src/mesh.rs` avec une struct `Mesh` (vertex buffer + index buffer + nombre d'indices).
+- Le `Renderer` dessine une **liste** de maillages au lieu d'un triangle codé en dur.
+
+**Démo** : un triangle et un carré côte à côte.
+
+### Étape B — Uniforms et temps ⭐⭐⭐
+
+- Faire l'[exercice 7](06-exercices.md#exercice-7--faire-tourner-le-triangle-uniform-buffer).
+- Généraliser : une struct `Globals` envoyée une fois par image (temps, taille d'écran).
+
+**Démo** : le triangle tourne.
+
+### Étape C — Caméra 3D ⭐⭐⭐
+
+- Ajouter `glam` à `zentrix-render` (déjà déclaré dans le catalogue du workspace).
+- Créer `camera.rs` : position, cible, champ de vision → matrice `view_projection` (voir l'exemple de [moteurGraphique.md §1.7](../moteurGraphique.md)).
+- Envoyer la matrice via l'uniform de l'étape B, la multiplier dans le vertex shader.
+- Corriger le rapport largeur/hauteur au redimensionnement : fini le triangle étiré.
+
+**Démo** : un cube 3D, vu en perspective.
+
+### Étape D — Profondeur (depth buffer) ⭐⭐
+
+- Créer une texture de profondeur (`Depth32Float`), à recréer à chaque redimensionnement.
+- Activer `depth_stencil` dans le pipeline.
+
+**Démo** : plusieurs cubes qui se cachent correctement les uns les autres.
+
+### Étape E — Entrées et caméra libre ⭐⭐
+
+- Dans `zentrix-platform`, créer une struct `Input` qui mémorise les touches enfoncées et le mouvement de la souris (voir Phase 5).
+- Déplacer la caméra avec `ZQSD` + souris, en multipliant par `dt`.
+
+**Démo** : se promener dans une scène de cubes.
+
+### Étape F — Textures ⭐⭐⭐
+
+- Créer la crate **`zentrix-assets`** (voir [chapitre 3 §3.6](03-cargo-et-workspace.md#36-ajouter-une-nouvelle-crate-au-moteur)) qui charge les images avec la crate `image`.
+- Côté rendu : texture GPU + *sampler* + coordonnées UV dans `Vertex` + bind group.
+
+**Démo** : un cube texturé.
+
+### Étape G — Rendu de debug ⭐⭐
+
+- Une passe qui dessine des lignes (`PrimitiveTopology::LineList`) : grille au sol, axes X/Y/Z.
+- API : `renderer.debug_line(debut, fin, couleur)` (voir [moteurGraphique.md §2.6](../moteurGraphique.md)).
+
+**Démo** : grille et repère visibles dans la scène. **Fin de la Phase 2.**
+
+### Étape H — Scène et ECS (Phase 3) ⭐⭐⭐⭐
+
+- Créer la crate **`zentrix-scene`** avec un ECS (`hecs` est le plus simple pour commencer, `bevy_ecs` le plus complet).
+- Composants `Transform`, `MeshRenderer`, `Camera`.
+- Le `Renderer` reçoit une liste de « commandes de dessin » extraite de la scène — il ne connaît jamais l'ECS directement (voir [moteurGraphique.md §2.1–2.3](../moteurGraphique.md)).
+
+---
+
+## Architecture cible
+
+```text
+                         zentrix-app
+          ┌──────────┬──────┴─────┬─────────────┐
+          ▼          ▼            ▼             ▼
+  zentrix-platform  zentrix-scene  zentrix-assets  zentrix-render
+     (+ Input)       (ECS)          (images,         (Mesh, Camera,
+          │            │             modèles)         passes, debug)
+          │            │               │                 │
+          │            └───────┬───────┘            zentrix-rhi
+          │                    │                         │
+          └──────────────▶ zentrix-core ◀────────────────┘
+                         (+ maths glam)
+```
+
+Règles à conserver en grandissant :
+
+1. **Les dépendances vont vers le bas.** `zentrix-render` ne dépend jamais de `zentrix-scene`.
+2. **Le rendu ne possède pas la logique de jeu**, et le jeu ne manipule jamais directement des objets wgpu.
+3. **Pas d'abstraction prématurée** : on ne crée un système de plugins, un render graph, etc. que lorsqu'on a au moins deux cas d'utilisation réels (principe de [GAME_ENGINE_DEVELOPMENT_PHASES.md](../GAME_ENGINE_DEVELOPMENT_PHASES.md)).
+4. **Chaque étape a sa démo** et ses tests là où c'est possible (`zentrix-core` en premier).
+
+---
+
+## Et Nanite / Lumen ?
+
+[nanites_et_lumen.md](../nanites_et_lumen.md) décrit des techniques de pointe (géométrie virtualisée, éclairage global dynamique). Elles demandent de maîtriser au préalable : les compute shaders, les storage buffers, le *culling* sur GPU, les *render graphs*, le *deferred shading*... Gardez-les comme horizon lointain : chaque étape ci-dessus vous en rapproche.
+
+---
+
+➡️ **Chapitre suivant** : [Glossaire](08-glossaire.md)

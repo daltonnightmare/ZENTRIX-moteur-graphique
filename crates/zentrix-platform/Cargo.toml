@@ -1,0 +1,12 @@
+[package]
+name = "zentrix-platform"
+description = "Fenêtre, entrées et boucle d'événements de ZENTRIX (enveloppe autour de winit)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+winit = { workspace = true }
+log = { workspace = true }
+anyhow = { workspace = true }
+zentrix-core = { workspace = true }

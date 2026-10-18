@@ -1,0 +1,10 @@
+[package]
+name = "zentrix-core"
+description = "Types fondamentaux de ZENTRIX (couleurs, temps). Ne dépend ni du GPU ni de la fenêtre."
+# `.workspace = true` : on hérite de la valeur définie dans le Cargo.toml racine.
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+# Volontairement AUCUNE dépendance : le noyau doit rester léger et testable seul.
+[dependencies]

@@ -1,0 +1,20 @@
+[package]
+name = "zentrix-app"
+description = "Point d'entrée de ZENTRIX : assemble toutes les crates et lance la boucle."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+# Cette crate contient un `src/main.rs` : c'est donc un EXÉCUTABLE (binaire),
+# contrairement aux autres crates qui ont un `src/lib.rs` (bibliothèques).
+# C'est le seul binaire du workspace : `cargo run` depuis la racine le lance.
+
+[dependencies]
+zentrix-core = { workspace = true }
+zentrix-platform = { workspace = true }
+zentrix-rhi = { workspace = true }
+zentrix-render = { workspace = true }
+pollster = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }

@@ -1,0 +1,12 @@
+[package]
+name = "zentrix-rhi"
+description = "RHI (Render Hardware Interface) de ZENTRIX : accès bas niveau au GPU via wgpu."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+wgpu = { workspace = true }
+winit = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
