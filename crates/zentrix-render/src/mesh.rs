@@ -134,10 +134,22 @@ impl MeshData {
 ///
 /// C'est un simple numéro (`usize`), donc `Copy` et gratuit à dupliquer :
 /// 1000 cubes peuvent partager le même `MeshHandle`, la géométrie n'existe
-/// qu'une fois sur le GPU. Le champ est privé : impossible de fabriquer un
-/// handle invalide depuis l'extérieur de la crate.
+/// qu'une fois sur le GPU. Le champ est privé : on obtient normalement un
+/// handle avec `Renderer::add_mesh`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MeshHandle(pub(crate) usize);
+
+impl MeshHandle {
+    /// Fabrique un handle à partir d'un numéro, **sans vérification**.
+    ///
+    /// Réservé aux tests et aux outils, qui ont besoin de handles sans GPU
+    /// (par exemple les tests de `zentrix-scene`). Dessiner avec un handle
+    /// qui ne correspond à aucun maillage chargé provoque un panic.
+    #[doc(hidden)]
+    pub const fn from_index(index: usize) -> Self {
+        Self(index)
+    }
+}
 
 /// Un maillage chargé sur le GPU.
 pub(crate) struct Mesh {

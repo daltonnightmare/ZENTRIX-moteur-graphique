@@ -9,9 +9,11 @@
 //! ```text
 //!  au démarrage :  let cube = renderer.add_mesh(&gpu, &MeshData::cube());
 //!                  let bois = renderer.add_texture(&gpu, &image);
-//!  chaque image :  renderer.render(&mut gpu, &camera, &[
+//!  chaque image :  debug.clear();
+//!                  debug.axes(Vec3::ZERO, 1.0);           // lignes de debug (facultatif)
+//!                  renderer.render(&mut gpu, &camera, &[
 //!                      DrawCommand { mesh: cube, texture: Some(bois), transform: t.matrix() },
-//!                  ])?;
+//!                  ], &debug)?;
 //! ```
 //!
 //! ## Le trajet d'une image
@@ -29,6 +31,7 @@
 //!    │      └─ pour chaque maillage :
 //!    │           ├─ set_vertex_buffer / set_index_buffer → « voici la géométrie »
 //!    │           └─ draw_indexed(.., instances)          → « dessine-la N fois »
+//!    │      └─ set_pipeline(lignes) + draw(...)            → les lignes de debug
 //!    ├─ 4. queue.submit(encoder.finish())
 //!    │                                 → on envoie le carnet au GPU
 //!    └─ 5. frame.present()              → l'image apparaît à l'écran
@@ -37,7 +40,9 @@
 //! Important : les étapes 2 et 3 n'exécutent **rien** sur le GPU. Elles
 //! *enregistrent* des commandes. Le GPU ne travaille qu'au `submit`.
 
+mod buffer;
 mod camera;
+mod debug;
 mod depth;
 mod mesh;
 mod pipeline;
@@ -46,6 +51,7 @@ mod texture;
 mod vertex;
 
 pub use camera::Camera;
+pub use debug::DebugLines;
 pub use mesh::{MeshData, MeshHandle};
 pub use renderer::{DrawCommand, Renderer};
 pub use texture::TextureHandle;

@@ -3,6 +3,7 @@
 
 use zentrix_rhi::wgpu;
 
+use crate::debug::LineVertex;
 use crate::depth::DEPTH_FORMAT;
 use crate::vertex::{InstanceRaw, Vertex};
 
@@ -101,6 +102,68 @@ pub(crate) fn create_mesh_pipeline(
             compilation_options: Default::default(),
         }),
 
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// Crée le pipeline des lignes de debug (voir debug.rs).
+///
+/// Différences avec le pipeline des maillages :
+///
+/// - topologie `LineList` : les sommets sont reliés deux par deux en segments ;
+/// - pas d'élimination des faces arrière (une ligne n'a pas de face) ;
+/// - test de profondeur `LessEqual` **sans écriture** : une ligne derrière
+///   un cube est cachée, mais une ligne ne cache jamais rien ;
+/// - pas de texture : seul le bind group de la caméra est utilisé.
+pub(crate) fn create_line_pipeline(
+    device: &wgpu::Device,
+    target_format: wgpu::TextureFormat,
+    camera_layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Debug Line Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/debug.wgsl").into()),
+    });
+
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Debug Line Pipeline Layout"),
+        bind_group_layouts: &[Some(camera_layout)],
+        immediate_size: 0,
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Debug Line Pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[Some(LineVertex::layout())],
+            compilation_options: Default::default(),
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::LineList,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: target_format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
         multiview_mask: None,
         cache: None,
     })

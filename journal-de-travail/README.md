@@ -42,6 +42,10 @@ L'ordre alphabétique des noms de fichiers donne donc l'ordre chronologique.
 | 2026-10-31 | suppression | [Caméra en orbite automatique](2026-10-31_suppression_camera-en-orbite.md) |
 | 2026-10-31 | changement-majeur | [Textures et crate `zentrix-assets`](2026-10-31_changement-majeur_textures-et-crate-assets.md) |
 | 2026-10-31 | modification | [API de `Vertex` / `DrawCommand`, message des commandes](2026-10-31_modification_api-vertex-drawcommand-et-logs.md) |
+| 2026-10-31 | changement-majeur | [Rendu de debug : lignes, grille, axes, boîtes](2026-10-31_changement-majeur_rendu-de-debug.md) |
+| 2026-10-31 | amelioration | [Buffer GPU extensible commun, FPS dans le titre](2026-10-31_amelioration_buffer-extensible-et-fps.md) |
+| 2026-10-31 | changement-majeur | [Scène et ECS (`zentrix-scene`)](2026-10-31_changement-majeur_scene-et-ecs.md) |
+| 2026-10-31 | suppression | [État « manuel » de la démo](2026-10-31_suppression_etat-manuel-de-la-demo.md) |
 
 > Les entrées du 2026-07-13 et du 2026-10-18 ont été reconstituées a posteriori à partir de
 > l'historique git (`git log --stat`).

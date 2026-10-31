@@ -6,10 +6,10 @@ le code est commenté ligne par ligne, et un guide complet pour débutant accomp
 Il repose sur [`wgpu`](https://wgpu.rs) (une seule base de code pour Vulkan, DirectX 12, Metal et WebGPU)
 et sur [`winit`](https://docs.rs/winit) pour la fenêtre.
 
-> **État actuel : Phase 2 de la feuille de route.** Une fenêtre s'ouvre et affiche une scène 3D :
+> **État actuel : Phase 2 terminée, Phase 3 (scène et ECS) commencée.** Chaque objet est une entité d'un ECS. Une fenêtre s'ouvre et affiche une scène 3D :
 > une grille de caisses en bois texturées et de cubes colorés qui tournent sur un sol en damier, vue en
 > perspective et explorable avec une caméra libre (clavier + souris), avec test de profondeur, rendu
-> instancié et textures avec mipmaps.
+> instancié, textures avec mipmaps et rendu de debug (grille, axes, boîtes, FPS dans le titre).
 
 ---
 
@@ -29,6 +29,8 @@ cargo run
 | `Maj` (maintenue)     | Aller 3 fois plus vite                          |
 | molette               | Régler la vitesse de déplacement                |
 | `P`                   | Mettre en pause l'animation des cubes           |
+| `F1`                  | Afficher / masquer la grille et les axes        |
+| `F2`                  | Afficher / masquer les boîtes des cubes         |
 | `Échap`               | Libérer la souris, puis quitter                 |
 
 La première compilation prend quelques minutes (wgpu est une grosse dépendance). Les suivantes ne prennent que quelques secondes.
@@ -67,7 +69,8 @@ Le projet est un **workspace Cargo** : plusieurs petites crates, chacune avec un
 | [`zentrix-rhi`](crates/zentrix-rhi) | Connexion au GPU : instance, adapter, device, queue, surface. | `context.rs`, `error.rs` |
 | [`zentrix-render`](crates/zentrix-render) | Maillages, textures, caméra, depth buffer, pipelines, shaders, passes de rendu. | `renderer.rs`, `mesh.rs`, `texture.rs`, `camera.rs`, `pipeline.rs`, `shaders/mesh.wgsl` |
 | [`zentrix-assets`](crates/zentrix-assets) | Chargement des fichiers (images PNG/JPEG) en données du noyau. | `lib.rs` |
-| [`zentrix-app`](crates/zentrix-app) | Point d'entrée `main()` et démo. | `main.rs` |
+| [`zentrix-scene`](crates/zentrix-scene) | La scène : entités et composants (ECS `hecs`), extraction vers le rendu. | `lib.rs`, `components.rs` |
+| [`zentrix-app`](crates/zentrix-app) | Point d'entrée `main()` et démo (entités, composants et systèmes du jeu). | `main.rs`, `demo.rs`, `fly_camera.rs` |
 
 ```text
 ZENTRIX-moteur-graphique/
@@ -78,6 +81,7 @@ ZENTRIX-moteur-graphique/
 │   ├── zentrix-rhi/
 │   ├── zentrix-render/
 │   ├── zentrix-assets/
+│   ├── zentrix-scene/
 │   └── zentrix-app/
 ├── assets/                 ← ressources du jeu (textures...)
 ├── journal-de-travail/     ← historique daté des changements

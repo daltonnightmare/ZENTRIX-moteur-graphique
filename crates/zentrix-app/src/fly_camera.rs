@@ -1,19 +1,23 @@
-//! [`FlyCamera`] : une caméra libre pilotée au clavier et à la souris.
+//! [`FlyCamera`] : un composant qui pilote une entité au clavier et à la souris.
 //!
-//! Elle vit dans `zentrix-app` car c'est la seule crate qui connaît à la fois
-//! les entrées (`zentrix-platform`) et la caméra (`zentrix-render`) : les
+//! Il vit dans `zentrix-app` car c'est la seule crate qui connaît à la fois
+//! les entrées (`zentrix-platform`) et la scène (`zentrix-scene`) : les
 //! couches du moteur restent indépendantes les unes des autres.
+//!
+//! Dans la scène, l'entité caméra porte trois composants :
+//! `Transform` (où elle est), `Camera3d` (son objectif) et `FlyCamera` (qui
+//! la pilote). Le système [`FlyCamera::update`] modifie le `Transform`.
 
-use zentrix_core::math::Vec3;
+use zentrix_core::Transform;
+use zentrix_core::math::{Quat, Vec3};
 use zentrix_platform::{Input, KeyCode};
-use zentrix_render::Camera;
 
 /// Limite du regard vers le haut ou le bas : un peu moins de 90°. À 90° pile,
 /// la direction regardée serait parallèle au « haut » de la caméra, et la
 /// matrice de vue deviendrait indéfinie (l'image se retournerait).
 const MAX_PITCH: f32 = 89f32.to_radians();
 
-/// Une caméra « fantôme » : elle vole librement, sans gravité ni collision.
+/// Un contrôleur « fantôme » : l'entité vole librement, sans gravité ni collision.
 ///
 /// # L'orientation : lacet et tangage
 ///
@@ -26,9 +30,11 @@ const MAX_PITCH: f32 = 89f32.to_radians();
 /// ```
 ///
 /// Avec `yaw = 0` et `pitch = 0`, la caméra regarde vers -Z (convention de ZENTRIX).
+///
+/// La position, elle, est dans le `Transform` de l'entité : le contrôleur ne
+/// stocke que ce qui lui est propre.
 #[derive(Debug, Clone)]
 pub struct FlyCamera {
-    pub position: Vec3,
     /// Lacet en radians. Positif = tourné vers la droite (+X).
     pub yaw: f32,
     /// Tangage en radians. Positif = vers le haut.
@@ -40,18 +46,29 @@ pub struct FlyCamera {
 }
 
 impl FlyCamera {
-    /// Crée une caméra placée en `position` et tournée vers `target`.
-    pub fn looking_at(position: Vec3, target: Vec3) -> Self {
+    /// Crée un contrôleur et le `Transform` d'une entité placée en
+    /// `position` et tournée vers `target`.
+    pub fn looking_at(position: Vec3, target: Vec3) -> (Self, Transform) {
         let dir = (target - position).normalize();
-        Self {
-            position,
+        let controller = Self {
             // On inverse les formules de `forward()` : `asin` retrouve
             // l'angle à partir de la hauteur, `atan2` à partir de x et z.
             yaw: dir.x.atan2(-dir.z),
             pitch: dir.y.asin().clamp(-MAX_PITCH, MAX_PITCH),
             speed: 5.0,
             sensitivity: 0.002,
-        }
+        };
+        let transform = Transform::from_translation(position).with_rotation(controller.rotation());
+        (controller, transform)
+    }
+
+    /// L'orientation sous forme de quaternion, pour le `Transform`.
+    ///
+    /// D'abord le tangage (autour de X : lever la tête), puis le lacet
+    /// (autour de Y : tourner la tête). Le lacet est négatif car une rotation
+    /// positive autour de Y tourne vers la GAUCHE (règle de la main droite).
+    pub fn rotation(&self) -> Quat {
+        Quat::from_rotation_y(-self.yaw) * Quat::from_rotation_x(self.pitch)
     }
 
     /// La direction regardée (vecteur de longueur 1).
@@ -73,13 +90,14 @@ impl FlyCamera {
         self.forward().cross(Vec3::Y).normalize()
     }
 
-    /// Applique les entrées de cette image.
+    /// Le **système** : applique les entrées de cette image au `Transform`
+    /// de l'entité pilotée.
     ///
     /// - `look` : la souris doit-elle tourner la caméra ? (vrai quand le
     ///   curseur est capturé, sinon bouger la souris vers un autre programme
     ///   ferait tourner la vue) ;
     /// - contrôles **physiques** : `KeyW/A/S/D` = ZQSD en AZERTY, WASD en QWERTY.
-    pub fn update(&mut self, input: &Input, dt: f32, look: bool) {
+    pub fn update(&mut self, transform: &mut Transform, input: &Input, dt: f32, look: bool) {
         // --- Orientation ------------------------------------------------------
         if look {
             let delta = input.mouse_delta();
@@ -123,13 +141,8 @@ impl FlyCamera {
         // `normalize_or_zero` : un vecteur nul (aucune touche, ou Z + S) ne
         // peut pas être normalisé ; on obtient alors simplement zéro.
         // Multiplier par `dt` rend la vitesse indépendante du nombre d'images par seconde.
-        self.position += direction.normalize_or_zero() * self.speed * boost * dt;
-    }
-
-    /// Recopie la position et l'orientation dans la caméra de rendu.
-    pub fn apply_to(&self, camera: &mut Camera) {
-        camera.position = self.position;
-        camera.target = self.position + self.forward();
+        transform.translation += direction.normalize_or_zero() * self.speed * boost * dt;
+        transform.rotation = self.rotation();
     }
 }
 
@@ -139,7 +152,7 @@ mod tests {
 
     #[test]
     fn angles_nuls_regardent_vers_moins_z() {
-        let cam = FlyCamera::looking_at(Vec3::ZERO, -Vec3::Z);
+        let (cam, _) = FlyCamera::looking_at(Vec3::ZERO, -Vec3::Z);
         assert!(cam.yaw.abs() < 1e-6 && cam.pitch.abs() < 1e-6);
         assert!(cam.forward().abs_diff_eq(-Vec3::Z, 1e-6));
         assert!(cam.right().abs_diff_eq(Vec3::X, 1e-6));
@@ -149,7 +162,8 @@ mod tests {
     fn looking_at_retrouve_la_direction() {
         let position = Vec3::new(0.0, 4.0, 11.0);
         let target = Vec3::new(2.0, 0.5, -3.0);
-        let cam = FlyCamera::looking_at(position, target);
+        let (cam, transform) = FlyCamera::looking_at(position, target);
+        assert_eq!(transform.translation, position);
         let attendu = (target - position).normalize();
         assert!(
             cam.forward().abs_diff_eq(attendu, 1e-5),
@@ -161,8 +175,22 @@ mod tests {
     #[test]
     fn le_tangage_est_borne() {
         // Regarder pile vers le haut est ramené juste sous la verticale.
-        let cam = FlyCamera::looking_at(Vec3::ZERO, Vec3::Y);
+        let (cam, _) = FlyCamera::looking_at(Vec3::ZERO, Vec3::Y);
         assert!(cam.pitch <= MAX_PITCH);
         assert!(cam.right().is_finite());
+    }
+
+    #[test]
+    fn la_rotation_regarde_dans_la_direction_forward() {
+        // Le Transform (utilisé par la scène pour construire la caméra) et
+        // `forward()` (utilisé pour se déplacer) doivent être d'accord.
+        let (cam, transform) =
+            FlyCamera::looking_at(Vec3::new(1.0, 3.0, 2.0), Vec3::new(-4.0, 0.0, -6.0));
+        let regard = transform.rotation * Vec3::NEG_Z;
+        assert!(
+            regard.abs_diff_eq(cam.forward(), 1e-5),
+            "{regard} != {}",
+            cam.forward()
+        );
     }
 }

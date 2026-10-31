@@ -12,8 +12,9 @@ Ce chapitre relie la base actuelle aux documents de conception : [GAME_ENGINE_DE
 |------------------------------------------------|------|
 | **Phase 0** — Vision, périmètre | ✅ Rust + wgpu, bureau d'abord, workspace multi-crates |
 | **Phase 1** — Fondation et boucle d'exécution | ✅ fenêtre, événements, delta time, FPS, logs, arrêt propre · ⏳ fichier de configuration |
-| **Phase 2** — Noyau de rendu | 🟡 **en cours** : GPU + surface + pipeline ✅ · maillages, uniforms, caméra 3D, depth buffer, instanciation ✅ · entrées + caméra libre ✅ · textures ✅ · debug ⏳ |
-| Phase 3+ — ECS, assets, entrées... | ⏳ à venir |
+| **Phase 2** — Noyau de rendu | ✅ **terminée** : GPU + surface + pipeline · maillages, uniforms, caméra 3D, depth buffer, instanciation · entrées + caméra libre · textures · rendu de debug |
+| **Phase 3** — Scène et ECS | 🟡 **en cours** : `zentrix-scene` (hecs), composants `Transform` / `MeshRenderer` / `Camera3d` / `Name`, extraction vers le rendu ✅ · hiérarchie, sérialisation ⏳ |
+| Phase 4+ — éclairage, modèles 3D, audio, physique... | ⏳ à venir |
 
 ---
 
@@ -86,18 +87,50 @@ Chaque étape produit quelque chose de **visible**, ce qui permet de valider qu'
 
 **Démo** : un cube texturé.
 
-### Étape G — Rendu de debug ⭐⭐ ← prochaine étape
+### Étape G — Rendu de debug ⭐⭐ ✅
+
+> ✅ Réalisée : `DebugLines` dans [debug.rs](../../crates/zentrix-render/src/debug.rs)
+> (`line`, `grid`, `axes`, `wire_box`), second pipeline `LineList` avec test de profondeur sans
+> écriture. L'API retenue diffère légèrement de `renderer.debug_line(...)` : l'application
+> remplit un `DebugLines` et le passe à `render`, comme les `DrawCommand`.
 
 - Une passe qui dessine des lignes (`PrimitiveTopology::LineList`) : grille au sol, axes X/Y/Z.
 - API : `renderer.debug_line(debut, fin, couleur)` (voir [moteurGraphique.md §2.6](../moteurGraphique.md)).
 
 **Démo** : grille et repère visibles dans la scène. **Fin de la Phase 2.**
 
-### Étape H — Scène et ECS (Phase 3) ⭐⭐⭐⭐
+### Étape H — Scène et ECS (Phase 3) ⭐⭐⭐⭐ ✅
 
 - Créer la crate **`zentrix-scene`** avec un ECS (`hecs` est le plus simple pour commencer, `bevy_ecs` le plus complet).
 - Composants `Transform`, `MeshRenderer`, `Camera`.
 - Le `Renderer` reçoit une liste de « commandes de dessin » extraite de la scène — il ne connaît jamais l'ECS directement (voir [moteurGraphique.md §2.1–2.3](../moteurGraphique.md)).
+
+> ✅ Réalisée : [zentrix-scene](../../crates/zentrix-scene/src/lib.rs) avec `hecs` 0.11. La caméra est
+> une entité (`Transform` + `Camera3d`) : elle regarde vers le -Z de son `Transform`.
+> `Scene::extract_draws` et `Scene::camera` produisent ce que le rendu attend. Côté jeu,
+> [demo.rs](../../crates/zentrix-app/src/demo.rs) définit ses propres composants (`Spin`,
+> `FlyCamera`) et ses systèmes (`spin_system`, `fly_camera_system`, `bounds_system`).
+
+### Étape I — Hiérarchie de transformations ⭐⭐⭐ ← prochaine étape
+
+- Composants `Parent` / `Children` et un `GlobalTransform` calculé : un objet suit son parent
+  (une roue suit la voiture, une arme suit la main).
+- Un système de propagation qui parcourt l'arbre de la racine vers les feuilles, avant l'extraction.
+
+**Démo** : un « système solaire » (une lune qui tourne autour d'une planète qui tourne autour du soleil).
+
+### Étape J — Éclairage simple ⭐⭐⭐
+
+- Ajouter les **normales** dans `Vertex`, une lumière directionnelle + ambiante dans un uniform.
+- Éclairage de Lambert (diffus) dans `mesh.wgsl`, puis Blinn-Phong (reflets).
+
+**Démo** : des cubes qui ont une face éclairée et une face dans l'ombre.
+
+### Étape K — Modèles 3D (glTF) ⭐⭐⭐⭐
+
+- Dans `zentrix-assets` : charger des fichiers `.gltf` / `.glb` (crate `gltf`) en `MeshData` + textures.
+
+**Démo** : un modèle 3D téléchargé (licence libre) au milieu de la scène.
 
 ---
 
@@ -110,12 +143,16 @@ Chaque étape produit quelque chose de **visible**, ce qui permet de valider qu'
   zentrix-platform  zentrix-scene  zentrix-assets  zentrix-render
      (+ Input)       (ECS)          (images,         (Mesh, Camera,
           │            │             modèles)         passes, debug)
-          │            │               │                 │
-          │            └───────┬───────┘            zentrix-rhi
-          │                    │                         │
+          │            └───────────────│────────────────▶ │
+          │                            │            zentrix-rhi
+          │                            │                 │
           └──────────────▶ zentrix-core ◀────────────────┘
-                         (+ maths glam)
+                         (+ maths glam, Image)
 ```
+
+> `zentrix-scene` dépend de `zentrix-render` pour connaître les **types** à produire
+> (`MeshHandle`, `TextureHandle`, `DrawCommand`, `Camera`). L'inverse reste interdit : le rendu
+> ne connaît jamais l'ECS.
 
 Règles à conserver en grandissant :
 

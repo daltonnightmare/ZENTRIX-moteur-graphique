@@ -3,13 +3,14 @@
 //! L'exécutable de démonstration de ZENTRIX. Il assemble les crates :
 //!
 //! ```text
-//!                 zentrix-app  (ce fichier)
-//!                /      |      \
-//!   zentrix-platform  zentrix-render
-//!          |              |
-//!          |         zentrix-rhi ── wgpu ── GPU
-//!          |              |
-//!        winit       zentrix-core
+//!                        zentrix-app  (ce fichier + demo.rs + fly_camera.rs)
+//!          ┌──────────────┬────┴─────────┬───────────────┐
+//!  zentrix-platform  zentrix-scene  zentrix-assets        │
+//!     (winit)         (hecs ECS)     (image)             │
+//!          │              └──────▶ zentrix-render ◀──────┘
+//!          │                            │
+//!          │                       zentrix-rhi ── wgpu ── GPU
+//!          └──────────▶ zentrix-core ◀──┘
 //! ```
 //!
 //! Lancer avec : `cargo run` (depuis la racine du projet).
@@ -17,7 +18,8 @@
 //! `$env:RUST_LOG="debug"; cargo run` (PowerShell).
 //!
 //! La démo : une grille de cubes (caisses en bois texturées et cubes colorés)
-//! qui tournent sur un sol en damier, explorée avec une caméra libre.
+//! qui tournent sur un sol en damier, explorée avec une caméra libre. Tout ce
+//! qui existe dans le monde est une **entité** de la scène (voir demo.rs).
 //!
 //! Commandes (touches données pour un clavier AZERTY) :
 //!
@@ -29,8 +31,11 @@
 //! | `Maj` (maintenue)   | aller 3 fois plus vite                        |
 //! | molette             | régler la vitesse                             |
 //! | `P`                 | mettre en pause l'animation des cubes         |
+//! | `F1`                | afficher / masquer la grille et les axes      |
+//! | `F2`                | afficher / masquer les boîtes des cubes       |
 //! | `Échap`             | libérer la souris, puis quitter               |
 
+mod demo;
 mod fly_camera;
 
 use std::sync::Arc;
@@ -39,20 +44,19 @@ use std::sync::Arc;
 // elle enrichit le message d'erreur pour savoir OÙ l'erreur s'est produite.
 use anyhow::Context;
 
-use zentrix_core::math::{Quat, Vec3};
-use zentrix_core::{Color, Image, Transform};
+use zentrix_core::math::Vec3;
+use zentrix_core::{Color, Image};
 use zentrix_platform::{
     Application, Input, KeyCode, MouseButton, Window, WindowConfig, set_cursor_captured,
 };
-use zentrix_render::{Camera, DrawCommand, MeshData, MeshHandle, Renderer, TextureHandle};
+use zentrix_render::{DebugLines, DrawCommand, MeshData, Renderer};
 use zentrix_rhi::GpuContext;
+use zentrix_scene::Scene;
 
-use crate::fly_camera::FlyCamera;
+use crate::demo::{DemoAssets, GROUND_Y};
 
-/// Nombre de cubes par côté de la grille (la scène en contient le carré).
-const GRID_SIZE: i32 = 5;
-/// Distance entre deux cubes voisins.
-const GRID_SPACING: f32 = 1.8;
+/// Intervalle de mise à jour du compteur d'images par seconde (en secondes).
+const FPS_REFRESH: f32 = 0.5;
 
 /// Les objets qui n'existent qu'une fois la fenêtre créée.
 ///
@@ -62,28 +66,52 @@ struct GraphicsState {
     window: Arc<Window>,
     gpu: GpuContext,
     renderer: Renderer,
-    cube: MeshHandle,
-    /// Le même cube, mais tout blanc : la texture y garde ses vraies couleurs.
-    white_cube: MeshHandle,
-    ground: MeshHandle,
-    crate_texture: TextureHandle,
-    ground_texture: TextureHandle,
+    /// Début du titre de la fenêtre (nom du GPU), complété par les FPS.
+    title: String,
+}
+
+/// Compte les images pour afficher une moyenne lisible des FPS.
+///
+/// Afficher `1 / dt` à chaque image donnerait un nombre illisible qui saute
+/// sans arrêt. On compte plutôt les images sur une demi-seconde.
+#[derive(Default)]
+struct FpsCounter {
+    frames: u32,
+    elapsed: f32,
+}
+
+impl FpsCounter {
+    /// Enregistre une image. Renvoie `Some(fps)` quand une nouvelle moyenne
+    /// est disponible.
+    fn tick(&mut self, dt: f32) -> Option<f32> {
+        self.frames += 1;
+        self.elapsed += dt;
+        if self.elapsed < FPS_REFRESH {
+            return None;
+        }
+        let fps = self.frames as f32 / self.elapsed;
+        *self = Self::default();
+        Some(fps)
+    }
 }
 
 /// L'état de notre application de démonstration.
 struct ZentrixApp {
     /// `None` avant `on_start`, `Some(...)` après.
     graphics: Option<GraphicsState>,
-    /// Temps d'animation accumulé (en secondes).
-    time: f32,
-    /// La caméra de rendu, et le contrôleur qui la pilote.
-    camera: Camera,
-    fly_camera: FlyCamera,
+    /// Le monde du jeu : toutes les entités (caméra, sol, cubes...).
+    scene: Scene,
     /// La souris est-elle capturée par la fenêtre (mode « regard ») ?
     mouse_captured: bool,
     /// Les commandes de dessin de l'image en cours. Gardé d'une image à
     /// l'autre pour réutiliser sa mémoire.
     draws: Vec<DrawCommand>,
+    /// Les lignes de debug de l'image en cours.
+    debug: DebugLines,
+    /// F1 : grille et axes ; F2 : boîtes englobantes des cubes.
+    show_grid: bool,
+    show_bounds: bool,
+    fps: FpsCounter,
     /// L'animation est-elle en pause ?
     paused: bool,
     /// Demande de fermeture (touche Échap).
@@ -94,11 +122,13 @@ impl ZentrixApp {
     fn new() -> Self {
         Self {
             graphics: None,
-            time: 0.0,
-            camera: Camera::default(),
-            fly_camera: FlyCamera::looking_at(Vec3::new(0.0, 4.0, 11.0), Vec3::new(0.0, 0.5, 0.0)),
+            scene: Scene::default(),
             mouse_captured: false,
             draws: Vec::new(),
+            debug: DebugLines::default(),
+            show_grid: true,
+            show_bounds: false,
+            fps: FpsCounter::default(),
             paused: false,
             quit_requested: false,
         }
@@ -120,6 +150,13 @@ impl ZentrixApp {
                 "Animation {}",
                 if self.paused { "en pause" } else { "reprise" }
             );
+        }
+
+        if input.was_key_pressed(KeyCode::F1) {
+            self.show_grid = !self.show_grid;
+        }
+        if input.was_key_pressed(KeyCode::F2) {
+            self.show_bounds = !self.show_bounds;
         }
 
         // Échap libère d'abord la souris ; un second appui quitte.
@@ -154,43 +191,41 @@ impl Application for ZentrixApp {
         let mut renderer = Renderer::new(&gpu);
         renderer.clear_color = Color::ZENTRIX_NIGHT;
         // Chaque maillage n'est envoyé qu'UNE fois au GPU, puis réutilisé par
-        // toutes ses instances grâce à son handle.
-        let cube = renderer.add_mesh(&gpu, &MeshData::cube());
-        let white_cube = renderer.add_mesh(&gpu, &MeshData::cube().with_color([1.0; 3]));
-        // Le sol répète sa texture 8 × 8 fois (le sampler est en mode `Repeat`).
-        let ground = renderer.add_mesh(&gpu, &MeshData::plane([1.0; 3]).with_uv_scale(8.0));
-
-        // Les textures : une image chargée depuis le disque, une autre générée.
-        let crate_texture = renderer.add_texture(&gpu, &load_crate_image());
-        let ground_texture = renderer.add_texture(
-            &gpu,
-            &Image::checkerboard(
-                64,
-                2,
-                Color::rgb(0.10, 0.11, 0.16),
-                Color::rgb(0.16, 0.17, 0.24),
+        // toutes les entités qui y font référence grâce à son handle.
+        let assets = DemoAssets {
+            cube: renderer.add_mesh(&gpu, &MeshData::cube()),
+            white_cube: renderer.add_mesh(&gpu, &MeshData::cube().with_color([1.0; 3])),
+            // Le sol répète sa texture 8 × 8 fois (le sampler est en mode `Repeat`).
+            ground: renderer.add_mesh(&gpu, &MeshData::plane([1.0; 3]).with_uv_scale(8.0)),
+            // Les textures : une image chargée depuis le disque, une autre générée.
+            crate_texture: renderer.add_texture(&gpu, &load_crate_image()),
+            ground_texture: renderer.add_texture(
+                &gpu,
+                &Image::checkerboard(
+                    64,
+                    2,
+                    Color::rgb(0.10, 0.11, 0.16),
+                    Color::rgb(0.16, 0.17, 0.24),
+                ),
             ),
-        );
+        };
+        demo::spawn(&mut self.scene, &assets);
+        log::info!("Scène créée : {} entités", self.scene.entity_count());
 
         let info = gpu.adapter_info();
-        window.set_title(&format!(
-            "ZENTRIX — {} ({:?}) — clic : piloter, Échap : libérer",
-            info.name, info.backend
-        ));
+        let title = format!("ZENTRIX — {} ({:?})", info.name, info.backend);
+        window.set_title(&title);
         log::info!(
             "Commandes : clic gauche = capturer la souris, ZQSD = se déplacer, Espace/Ctrl = monter/descendre"
         );
         log::info!("            Maj = vite, molette = vitesse, P = pause, Échap = libérer/quitter");
+        log::info!("            F1 = grille et axes, F2 = boîtes englobantes");
 
         self.graphics = Some(GraphicsState {
             window,
             gpu,
             renderer,
-            cube,
-            white_cube,
-            ground,
-            crate_texture,
-            ground_texture,
+            title,
         });
         Ok(())
     }
@@ -206,52 +241,41 @@ impl Application for ZentrixApp {
     fn on_update(&mut self, dt: f32, input: &Input) {
         self.handle_commands(input);
 
+        // --- Les systèmes : la logique du jeu, entité par entité ---------------
         if !self.paused {
             // Grâce au delta time, l'animation a la même vitesse sur toutes les machines.
-            self.time += dt;
+            demo::spin_system(&mut self.scene.world, dt);
+        }
+        // La souris ne fait tourner la vue que si elle est capturée.
+        demo::fly_camera_system(&mut self.scene.world, input, dt, self.mouse_captured);
+
+        // --- L'extraction : ce que le rendu doit dessiner ----------------------
+        // Le Renderer ne connaît pas l'ECS : la scène lui prépare des listes simples.
+        self.draws.clear();
+        self.scene.extract_draws(&mut self.draws);
+        self.debug.clear();
+
+        let Some(g) = &self.graphics else { return };
+
+        if let Some(fps) = self.fps.tick(dt) {
+            g.window.set_title(&format!(
+                "{} — {fps:.0} FPS — clic : piloter, Échap : libérer",
+                g.title
+            ));
         }
 
-        // La souris ne fait tourner la vue que si elle est capturée.
-        self.fly_camera.update(input, dt, self.mouse_captured);
-        self.fly_camera.apply_to(&mut self.camera);
+        if self.show_grid {
+            // La grille flotte 1 cm au-dessus du sol : exactement à la même
+            // hauteur, lignes et sol auraient la même profondeur et
+            // « clignoteraient » en se disputant les pixels (z-fighting).
+            let ground = Vec3::new(0.0, GROUND_Y + 0.01, 0.0);
+            self.debug
+                .grid(ground, 16.0, 16, Color::rgb(0.30, 0.32, 0.42));
+            self.debug.axes(ground, 3.0);
+        }
 
-        // On reconstruit la liste des objets à dessiner. Plus tard, c'est
-        // l'ECS (zentrix-scene) qui produira cette liste à partir des entités.
-        let Some(g) = &self.graphics else { return };
-        self.draws.clear();
-
-        // Le sol : un plan de 1×1 agrandi 16 fois, juste sous les cubes.
-        self.draws.push(DrawCommand {
-            mesh: g.ground,
-            texture: Some(g.ground_texture),
-            transform: Transform::from_translation(Vec3::new(0.0, -0.5, 0.0))
-                .with_uniform_scale(16.0)
-                .matrix(),
-        });
-
-        // Une grille de cubes centrée sur l'origine. `half` décale la grille
-        // pour que son centre soit en (0, 0) plutôt que son coin.
-        let half = (GRID_SIZE - 1) as f32 * GRID_SPACING / 2.0;
-        for x in 0..GRID_SIZE {
-            for z in 0..GRID_SIZE {
-                let position = Vec3::new(
-                    x as f32 * GRID_SPACING - half,
-                    0.3,
-                    z as f32 * GRID_SPACING - half,
-                );
-                // Chaque cube tourne à sa propre vitesse, autour d'un axe incliné.
-                let speed = 0.5 + 0.15 * (x + z) as f32;
-                let axis = Vec3::new(1.0, 1.0, 0.3).normalize();
-                // Une case sur deux (comme un damier) : une caisse en bois.
-                let is_crate = (x + z) % 2 == 0;
-                self.draws.push(DrawCommand {
-                    mesh: if is_crate { g.white_cube } else { g.cube },
-                    texture: is_crate.then_some(g.crate_texture),
-                    transform: Transform::from_translation(position)
-                        .with_rotation(Quat::from_axis_angle(axis, self.time * speed))
-                        .matrix(),
-                });
-            }
+        if self.show_bounds {
+            demo::bounds_system(&self.scene.world, &mut self.debug);
         }
     }
 
@@ -261,7 +285,11 @@ impl Application for ZentrixApp {
 
     fn on_render(&mut self) -> anyhow::Result<()> {
         if let Some(g) = &mut self.graphics {
-            g.renderer.render(&mut g.gpu, &self.camera, &self.draws)?;
+            // Sans entité caméra, on utilise une caméra par défaut plutôt que
+            // de ne rien afficher.
+            let camera = self.scene.camera().unwrap_or_default();
+            g.renderer
+                .render(&mut g.gpu, &camera, &self.draws, &self.debug)?;
             // `pre_present_notify` n'est pas obligatoire, mais aide winit à
             // mieux planifier les images sur certaines plateformes (Wayland).
             g.window.pre_present_notify();
@@ -308,4 +336,21 @@ fn main() -> anyhow::Result<()> {
     };
 
     zentrix_platform::run(config, ZentrixApp::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fps_moyenne_sur_une_demi_seconde() {
+        let mut fps = FpsCounter::default();
+        // 29 images de 1/60 s : pas encore une demi-seconde.
+        for _ in 0..29 {
+            assert_eq!(fps.tick(1.0 / 60.0), None);
+        }
+        // La 30e atteint 0,5 s : 30 images / 0,5 s = 60 FPS.
+        let moyenne = fps.tick(1.0 / 60.0).expect("une moyenne");
+        assert!((moyenne - 60.0).abs() < 0.01, "{moyenne}");
+    }
 }

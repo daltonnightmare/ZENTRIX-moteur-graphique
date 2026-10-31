@@ -5,10 +5,12 @@ use zentrix_core::{Color, Image};
 use zentrix_rhi::wgpu::util::DeviceExt; // apporte la méthode `create_buffer_init`
 use zentrix_rhi::{GpuContext, RhiError, wgpu};
 
+use crate::buffer::GrowableBuffer;
 use crate::camera::Camera;
+use crate::debug::{DebugLines, LineVertex};
 use crate::depth::DepthTexture;
 use crate::mesh::{Mesh, MeshData, MeshHandle};
-use crate::pipeline::create_mesh_pipeline;
+use crate::pipeline::{create_line_pipeline, create_mesh_pipeline};
 use crate::texture::{self, Texture, TextureHandle};
 use crate::vertex::InstanceRaw;
 
@@ -51,6 +53,8 @@ struct CameraUniform {
 /// Nombre d'instances que le buffer peut contenir au départ. Il grandit
 /// automatiquement si la scène en demande plus.
 const INITIAL_INSTANCE_CAPACITY: usize = 256;
+/// Nombre de sommets de lignes de debug au départ (2 par ligne).
+const INITIAL_LINE_VERTEX_CAPACITY: usize = 1024;
 
 /// Le moteur de rendu. Il **possède** les ressources GPU (pipeline, buffers,
 /// maillages) et dessine une image à chaque appel de [`Renderer::render`].
@@ -63,6 +67,7 @@ pub struct Renderer {
     /// Couleur de fond utilisée pour effacer l'écran à chaque image.
     pub clear_color: Color,
     pipeline: wgpu::RenderPipeline,
+    line_pipeline: wgpu::RenderPipeline,
 
     /// Tous les maillages chargés. Un `MeshHandle` est un indice dans ce `Vec`.
     meshes: Vec<Mesh>,
@@ -76,9 +81,9 @@ pub struct Renderer {
     camera_bind_group: wgpu::BindGroup,
 
     /// Les matrices de toutes les instances de l'image, à la suite.
-    instance_buffer: wgpu::Buffer,
-    /// Nombre de matrices que `instance_buffer` peut contenir.
-    instance_capacity: usize,
+    instance_buffer: GrowableBuffer,
+    /// Les sommets des lignes de debug de l'image.
+    line_buffer: GrowableBuffer,
     /// Tableaux de travail réutilisés d'une image à l'autre : `clear()` vide
     /// un `Vec` sans libérer sa mémoire, on évite donc une allocation par image.
     /// `instances` sert au tri, `instance_data` au format attendu par le GPU.
@@ -141,18 +146,30 @@ impl Renderer {
             &camera_layout,
             &texture_layout,
         );
+        let line_pipeline = create_line_pipeline(device, gpu.surface_format(), &camera_layout);
 
         let mut renderer = Self {
             clear_color: Color::default(),
             pipeline,
+            line_pipeline,
             meshes: Vec::new(),
             textures: Vec::new(),
             texture_layout,
             sampler,
             camera_buffer,
             camera_bind_group,
-            instance_buffer: create_instance_buffer(device, INITIAL_INSTANCE_CAPACITY),
-            instance_capacity: INITIAL_INSTANCE_CAPACITY,
+            instance_buffer: GrowableBuffer::new(
+                device,
+                "Instance Buffer",
+                wgpu::BufferUsages::VERTEX,
+                (INITIAL_INSTANCE_CAPACITY * std::mem::size_of::<InstanceRaw>()) as u64,
+            ),
+            line_buffer: GrowableBuffer::new(
+                device,
+                "Debug Line Buffer",
+                wgpu::BufferUsages::VERTEX,
+                (INITIAL_LINE_VERTEX_CAPACITY * std::mem::size_of::<LineVertex>()) as u64,
+            ),
             instances: Vec::new(),
             instance_data: Vec::new(),
             depth: DepthTexture::new(device, gpu.size()),
@@ -186,7 +203,9 @@ impl Renderer {
         TextureHandle(self.textures.len() - 1)
     }
 
-    /// Dessine une image complète, vue par `camera`, et l'affiche.
+    /// Dessine une image complète, vue par `camera`, et l'affiche : d'abord
+    /// les maillages de `draws`, puis les lignes de `debug` par-dessus (mais
+    /// cachées par les objets placés devant elles).
     ///
     /// `&mut GpuContext` car acquérir une image peut nécessiter de
     /// reconfigurer la surface (donc de modifier le contexte).
@@ -195,6 +214,7 @@ impl Renderer {
         gpu: &mut GpuContext,
         camera: &Camera,
         draws: &[DrawCommand],
+        debug: &DebugLines,
     ) -> Result<(), RhiError> {
         // 1. Obtenir l'image de la fenêtre. `let ... else` : si le motif ne
         //    correspond pas (ici `None`), on exécute le bloc `else`, qui doit
@@ -218,6 +238,11 @@ impl Renderer {
         gpu.queue()
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera_uniform));
         self.upload_instances(gpu, draws);
+        self.line_buffer.write(
+            gpu.device(),
+            gpu.queue(),
+            bytemuck::cast_slice(debug.vertices()),
+        );
 
         // 4. Le « command encoder » : un carnet où l'on enregistre des commandes.
         let mut encoder = gpu
@@ -259,7 +284,7 @@ impl Renderer {
                         // 1.0 = « infiniment loin » : le premier objet dessiné
                         // sur un pixel passe toujours le test de profondeur.
                         load: wgpu::LoadOp::Clear(1.0),
-                        // Conservée pour de futures passes (ex. lignes de debug).
+                        // Conservée pour de futures passes (post-traitement...).
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None, // notre format n'a pas de stencil
@@ -271,7 +296,7 @@ impl Renderer {
 
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.instance_buffer.buffer().slice(..));
 
             // `self.instances` est trié par (texture, maillage) : les instances
             // identiques se suivent. `chunk_by` découpe le tableau en groupes
@@ -293,6 +318,17 @@ impl Renderer {
                 // Tous les indices du maillage, pour les instances first..first+count.
                 render_pass.draw_indexed(0..mesh.index_count, 0, first..first + count);
                 first += count;
+            }
+
+            // Les lignes de debug, APRÈS les maillages : le depth buffer est
+            // alors rempli, et les lignes situées derrière un objet sont cachées.
+            let line_vertices = debug.vertices().len() as u32;
+            if line_vertices > 0 {
+                render_pass.set_pipeline(&self.line_pipeline);
+                // Le bind group n°0 (caméra) reste en place : les deux
+                // pipelines déclarent le même layout pour ce groupe.
+                render_pass.set_vertex_buffer(0, self.line_buffer.buffer().slice(..));
+                render_pass.draw(0..line_vertices, 0..1);
             }
         } // <- `render_pass` est détruite ici, l'emprunt de `encoder` prend fin.
 
@@ -319,37 +355,14 @@ impl Renderer {
         // Les tuples se comparent élément par élément : texture, puis maillage.
         self.instances.sort_by_key(|(key, _)| *key);
 
-        if self.instances.len() > self.instance_capacity {
-            // On double (au minimum) la capacité pour ne pas recréer le buffer
-            // à chaque nouvel objet.
-            self.instance_capacity = self.instances.len().next_power_of_two();
-            self.instance_buffer = create_instance_buffer(gpu.device(), self.instance_capacity);
-            log::debug!(
-                "Instance buffer agrandi à {} instances",
-                self.instance_capacity
-            );
-        }
-
         // On n'envoie que les matrices (pas les handles), à la suite.
         self.instance_data.clear();
         self.instance_data
             .extend(self.instances.iter().map(|(_, raw)| *raw));
-        if !self.instance_data.is_empty() {
-            gpu.queue().write_buffer(
-                &self.instance_buffer,
-                0,
-                bytemuck::cast_slice(&self.instance_data),
-            );
-        }
+        self.instance_buffer.write(
+            gpu.device(),
+            gpu.queue(),
+            bytemuck::cast_slice(&self.instance_data),
+        );
     }
-}
-
-/// Crée un buffer vide pouvant contenir `capacity` instances.
-fn create_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Instance Buffer"),
-        size: (capacity * std::mem::size_of::<InstanceRaw>()) as wgpu::BufferAddress,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
 }

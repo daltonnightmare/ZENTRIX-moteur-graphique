@@ -13,6 +13,15 @@ const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TextureHandle(pub(crate) usize);
 
+impl TextureHandle {
+    /// Fabrique un handle à partir d'un numéro, **sans vérification**.
+    /// Réservé aux tests et aux outils (voir `MeshHandle::from_index`).
+    #[doc(hidden)]
+    pub const fn from_index(index: usize) -> Self {
+        Self(index)
+    }
+}
+
 /// Une texture prête à l'emploi : on ne garde que son **bind group**, qui
 /// référence la vue de la texture et le sampler (et les maintient en vie).
 pub(crate) struct Texture {

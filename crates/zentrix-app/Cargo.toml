@@ -15,6 +15,7 @@ zentrix-platform = { workspace = true }
 zentrix-rhi = { workspace = true }
 zentrix-render = { workspace = true }
 zentrix-assets = { workspace = true }
+zentrix-scene = { workspace = true }
 pollster = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }

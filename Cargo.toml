@@ -24,6 +24,7 @@ members = [
     "crates/zentrix-rhi",       # accès bas niveau au GPU                — enveloppe wgpu
     "crates/zentrix-render",    # rendu haut niveau (pipelines, shaders) — utilise le RHI
     "crates/zentrix-assets",    # chargement des fichiers (images...)    — sans GPU
+    "crates/zentrix-scene",     # la scène : entités et composants (ECS)
     "crates/zentrix-app",       # l'exécutable qui assemble tout
 ]
 
@@ -43,6 +44,7 @@ zentrix-platform = { path = "crates/zentrix-platform" }
 zentrix-rhi      = { path = "crates/zentrix-rhi" }
 zentrix-render   = { path = "crates/zentrix-render" }
 zentrix-assets   = { path = "crates/zentrix-assets" }
+zentrix-scene    = { path = "crates/zentrix-scene" }
 
 # --- Fenêtre et événements ---
 winit = "0.30"          # crée la fenêtre, reçoit clavier/souris/redimensionnement
@@ -56,6 +58,9 @@ bytemuck = { version = "1", features = ["derive"] }  # convertit nos structs en 
 # Décodage d'images. `default-features = false` : on n'active que les formats
 # utiles (PNG, JPEG) au lieu d'une vingtaine, ce qui accélère la compilation.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# --- ECS (Entity Component System) ---
+hecs = "0.11"           # ECS minimaliste : un « World » d'entités, des composants, des requêtes
 
 # --- Mathématiques ---
 glam = { version = "0.34", features = ["bytemuck"] } # vecteurs / matrices / quaternions (ré-exporté par zentrix_core::math)

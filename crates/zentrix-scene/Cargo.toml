@@ -1,0 +1,14 @@
+[package]
+name = "zentrix-scene"
+description = "La scène de ZENTRIX : entités, composants (ECS avec hecs) et extraction vers le rendu."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+# La scène connaît les TYPES du rendu (handles, Camera, DrawCommand) pour
+# produire ce qu'il faut dessiner. L'inverse est interdit : zentrix-render ne
+# dépend jamais de zentrix-scene et ne voit jamais l'ECS.
+[dependencies]
+zentrix-core = { workspace = true }
+zentrix-render = { workspace = true }
+hecs = { workspace = true }
