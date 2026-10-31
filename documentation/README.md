@@ -17,6 +17,10 @@ Suivez le guide **dans l'ordre**. Chaque chapitre s'appuie sur le précédent et
 | 7 | [Feuille de route](guide-debutant/07-feuille-de-route.md) | Les prochaines étapes concrètes du moteur | 15 min |
 | 8 | [Glossaire](guide-debutant/08-glossaire.md) | Tous les termes techniques expliqués simplement | référence |
 
+## Je veux apprendre Rust de A à Z jusqu'au game engine
+
+👉 **[Cours complet : de débutant en Rust à créateur de game engine](cours-rust-game-engine.md)** — 24 modules en 4 parties (fondations, Rust intermédiaire, performance, architecture de moteur), avec exercices corrigés, projets et checklists. Le guide ci-dessus est centré sur ZENTRIX ; le cours couvre tout Rust et y renvoie quand c'est utile.
+
 > 💡 **Conseil** : gardez le code ouvert à côté du guide. Chaque fichier `.rs` est lui-même
 > abondamment commenté : le guide donne la vue d'ensemble, les commentaires donnent le détail.
 
