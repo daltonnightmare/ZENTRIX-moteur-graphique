@@ -36,23 +36,35 @@
 //! On pourrait remplacer `hecs` par `bevy_ecs` sans toucher au rendu.
 
 mod components;
+mod hierarchy;
 
-pub use components::{Camera3d, MeshRenderer, Name};
+pub use components::{Camera3d, DirectionalLight, MeshRenderer, Name};
+pub use hierarchy::{GlobalTransform, Parent};
 
 // Ré-export : l'application utilise `zentrix_scene::hecs` et a la garantie
 // d'avoir la même version que la scène.
 pub use hecs;
 pub use hecs::Entity;
 
-use zentrix_core::Transform;
-use zentrix_core::math::Vec3;
-use zentrix_render::{Camera, DrawCommand};
+use zentrix_core::math::{Mat4, Vec3};
+use zentrix_core::{Color, Transform};
+use zentrix_render::{Camera, DrawCommand, Lighting};
 
 /// Le monde du jeu : toutes les entités et leurs composants.
 ///
 /// Le champ `world` est public : pour les opérations courantes, on utilise
 /// directement l'API de `hecs` (`spawn`, `despawn`, `query`, `query_mut`...).
-/// `Scene` ajoute par-dessus ce qui concerne le moteur (extraction vers le rendu).
+/// `Scene` ajoute par-dessus ce qui concerne le moteur (hiérarchie,
+/// extraction vers le rendu).
+///
+/// # Ordre d'appel à chaque image
+///
+/// ```text
+///  1. les systèmes du jeu modifient les `Transform` (locaux)
+///  2. scene.update_transforms()   → calcule les `GlobalTransform`
+///  3. scene.extract_draws(...)    → utilise les `GlobalTransform`
+///     scene.camera()
+/// ```
 ///
 /// ```
 /// use zentrix_core::Transform;
@@ -70,9 +82,22 @@ use zentrix_render::{Camera, DrawCommand};
 /// }
 /// assert_eq!(scene.world.query::<&Vie>().iter().next().unwrap().0, 90);
 /// ```
-#[derive(Default)]
 pub struct Scene {
     pub world: hecs::World,
+    /// La lumière ambiante, présente partout. Ce n'est pas une entité : il
+    /// n'y en a qu'une par scène, et elle n'a ni position ni direction.
+    pub ambient_light: Color,
+    propagation: hierarchy::PropagationCache,
+}
+
+impl Default for Scene {
+    fn default() -> Self {
+        Self {
+            world: hecs::World::default(),
+            ambient_light: Lighting::default().ambient,
+            propagation: hierarchy::PropagationCache::default(),
+        }
+    }
 }
 
 impl Scene {
@@ -81,41 +106,122 @@ impl Scene {
         self.world.len()
     }
 
+    /// Calcule le [`GlobalTransform`] (position dans le monde) de chaque
+    /// entité, en tenant compte de ses parents (voir [`Parent`]).
+    ///
+    /// À appeler à chaque image, **après** les systèmes qui déplacent des
+    /// entités et **avant** [`Scene::extract_draws`] / [`Scene::camera`].
+    /// Sinon, le rendu montrerait les positions de l'image précédente.
+    pub fn update_transforms(&mut self) {
+        hierarchy::propagate(&mut self.world, &mut self.propagation);
+    }
+
+    /// Supprime une entité **et tous ses descendants**.
+    ///
+    /// Avec un simple `world.despawn(entité)`, les enfants survivraient et
+    /// deviendraient des racines (leur `Transform` local serait alors
+    /// interprété dans le repère du monde : ils « sauteraient »).
+    /// Renvoie le nombre d'entités supprimées.
+    pub fn despawn_recursive(&mut self, entity: Entity) -> usize {
+        let mut doomed = hierarchy::descendants(&self.world, entity);
+        doomed.push(entity);
+        doomed
+            .into_iter()
+            .filter(|&e| self.world.despawn(e).is_ok())
+            .count()
+    }
+
     /// Ajoute à `out` une commande de dessin pour chaque entité visible
     /// (qui possède un `Transform` **et** un `MeshRenderer`).
+    ///
+    /// La position utilisée est le [`GlobalTransform`] s'il a été calculé,
+    /// sinon le `Transform` local (entité sans parent, ou
+    /// `update_transforms` jamais appelé).
     ///
     /// `out` n'est pas vidé : l'appelant le vide (et garde sa mémoire d'une
     /// image à l'autre) ou y ajoute d'autres commandes.
     pub fn extract_draws(&self, out: &mut Vec<DrawCommand>) {
         // Une requête ne visite QUE les entités qui ont tous les composants
-        // demandés. Une caméra (sans `MeshRenderer`) est ignorée ici.
-        let mut query = self.world.query::<(&Transform, &MeshRenderer)>();
-        out.extend(query.iter().map(|(transform, renderer)| DrawCommand {
-            mesh: renderer.mesh,
-            texture: renderer.texture,
-            transform: transform.matrix(),
-        }));
+        // demandés (sauf ceux marqués `Option`). Une caméra, sans
+        // `MeshRenderer`, est ignorée ici.
+        let mut query = self
+            .world
+            .query::<(&Transform, Option<&GlobalTransform>, &MeshRenderer)>();
+        out.extend(
+            query
+                .iter()
+                .map(|(transform, global, renderer)| DrawCommand {
+                    mesh: renderer.mesh,
+                    texture: renderer.texture,
+                    transform: world_matrix(transform, global),
+                }),
+        );
     }
 
     /// La caméra de rendu, construite à partir de la **première** entité qui
     /// possède un `Transform` et un `Camera3d`. `None` s'il n'y en a aucune.
+    ///
+    /// Grâce à la hiérarchie, une caméra peut être l'enfant d'un objet
+    /// (caméra embarquée dans un véhicule, caméra « à l'épaule »...).
     pub fn camera(&self) -> Option<Camera> {
-        let mut query = self.world.query::<(&Transform, &Camera3d)>();
-        let (transform, lens) = query.iter().next()?;
-        Some(camera_from(transform, lens))
+        let mut query = self
+            .world
+            .query::<(&Transform, Option<&GlobalTransform>, &Camera3d)>();
+        let (transform, global, lens) = query.iter().next()?;
+        Some(camera_from(world_matrix(transform, global), lens))
     }
 }
 
-/// Convertit le couple (`Transform`, `Camera3d`) en `Camera` de rendu.
+impl Scene {
+    /// L'éclairage pour le rendu : la **première** entité qui possède un
+    /// `Transform` et une [`DirectionalLight`], plus `ambient_light`.
+    ///
+    /// Sans lumière directionnelle, seule l'ambiante éclaire la scène
+    /// (intensité 0) : les objets restent visibles, mais plats et sombres.
+    pub fn lighting(&self) -> Lighting {
+        let mut query = self
+            .world
+            .query::<(&Transform, Option<&GlobalTransform>, &DirectionalLight)>();
+        let sun = query.iter().next().map(|(transform, global, light)| {
+            let direction = world_matrix(transform, global).transform_vector3(Vec3::NEG_Z);
+            (direction, *light)
+        });
+        let (direction, light) = sun.unwrap_or((
+            Vec3::NEG_Y,
+            DirectionalLight {
+                color: Color::BLACK,
+                intensity: 0.0,
+            },
+        ));
+        Lighting {
+            direction,
+            color: light.color,
+            intensity: light.intensity,
+            ambient: self.ambient_light,
+        }
+    }
+}
+
+/// La matrice monde d'une entité : sa globale si elle existe, sinon sa locale.
+fn world_matrix(transform: &Transform, global: Option<&GlobalTransform>) -> Mat4 {
+    // `map_or_else(défaut, f)` : `f(valeur)` si `Some`, sinon `défaut()`.
+    global.map_or_else(|| transform.matrix(), |g| g.0)
+}
+
+/// Construit la `Camera` de rendu à partir de la matrice monde de l'entité
+/// et des réglages de son objectif.
 ///
-/// La caméra regarde vers le -Z de son repère : on fait tourner ce vecteur
-/// par la rotation de l'entité pour obtenir la direction du regard.
-fn camera_from(transform: &Transform, lens: &Camera3d) -> Camera {
-    let forward = transform.rotation * Vec3::NEG_Z;
+/// La caméra regarde vers le -Z de son repère : on transforme ce vecteur
+/// par la matrice pour obtenir la direction du regard dans le monde.
+/// `transform_vector3` ignore la translation (c'est une direction, pas un
+/// point) ; `normalize` annule l'effet d'une éventuelle mise à l'échelle.
+fn camera_from(matrix: Mat4, lens: &Camera3d) -> Camera {
+    let position = matrix.transform_point3(Vec3::ZERO);
+    let forward = matrix.transform_vector3(Vec3::NEG_Z).normalize();
     Camera {
-        position: transform.translation,
-        target: transform.translation + forward,
-        up: transform.rotation * Vec3::Y,
+        position,
+        target: position + forward,
+        up: matrix.transform_vector3(Vec3::Y).normalize(),
         fov_y: lens.fov_y,
         near: lens.near,
         far: lens.far,
@@ -169,5 +275,143 @@ mod tests {
         let direction = camera.target - camera.position;
         assert!(direction.abs_diff_eq(Vec3::NEG_X, 1e-6), "{direction}");
         assert!(camera.up.abs_diff_eq(Vec3::Y, 1e-6));
+    }
+
+    /// Position monde d'une entité après `update_transforms`.
+    fn position(scene: &Scene, entity: Entity) -> Vec3 {
+        scene
+            .world
+            .get::<&GlobalTransform>(entity)
+            .expect("GlobalTransform calculé")
+            .translation()
+    }
+
+    #[test]
+    fn un_enfant_suit_son_parent() {
+        let mut scene = Scene::default();
+        let parent = scene.world.spawn((Transform::from_translation(Vec3::X),));
+        let enfant = scene
+            .world
+            .spawn((Transform::from_translation(Vec3::Y * 2.0), Parent(parent)));
+        scene.update_transforms();
+        assert_eq!(position(&scene, enfant), Vec3::new(1.0, 2.0, 0.0));
+
+        // On déplace le parent : l'enfant suit à l'image suivante.
+        scene
+            .world
+            .get::<&mut Transform>(parent)
+            .unwrap()
+            .translation = Vec3::Z * 5.0;
+        scene.update_transforms();
+        assert_eq!(position(&scene, enfant), Vec3::new(0.0, 2.0, 5.0));
+    }
+
+    #[test]
+    fn la_rotation_du_parent_fait_orbiter_l_enfant() {
+        let mut scene = Scene::default();
+        // Le « soleil » tourne d'un quart de tour autour de +Y...
+        let soleil =
+            scene.world.spawn((Transform::IDENTITY
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),));
+        // ... la « planète », placée en +X dans son repère, passe en -Z.
+        let planete = scene
+            .world
+            .spawn((Transform::from_translation(Vec3::X * 3.0), Parent(soleil)));
+        // ... et la « lune », en +X de la planète, suit les deux rotations.
+        let lune = scene
+            .world
+            .spawn((Transform::from_translation(Vec3::X), Parent(planete)));
+        scene.update_transforms();
+        assert!(position(&scene, planete).abs_diff_eq(Vec3::new(0.0, 0.0, -3.0), 1e-5));
+        assert!(position(&scene, lune).abs_diff_eq(Vec3::new(0.0, 0.0, -4.0), 1e-5));
+    }
+
+    #[test]
+    fn un_orphelin_redevient_une_racine() {
+        let mut scene = Scene::default();
+        let parent = scene.world.spawn((Transform::from_translation(Vec3::X),));
+        let enfant = scene
+            .world
+            .spawn((Transform::from_translation(Vec3::Y), Parent(parent)));
+        scene.world.despawn(parent).unwrap();
+        scene.update_transforms();
+        assert_eq!(position(&scene, enfant), Vec3::Y);
+    }
+
+    #[test]
+    fn un_cycle_ne_bloque_pas() {
+        let mut scene = Scene::default();
+        let a = scene.world.spawn((Transform::IDENTITY,));
+        let b = scene.world.spawn((Transform::IDENTITY, Parent(a)));
+        scene.world.insert_one(a, Parent(b)).unwrap();
+        scene.update_transforms(); // doit se terminer, avec un avertissement
+        assert!(scene.world.get::<&GlobalTransform>(a).is_ok());
+    }
+
+    #[test]
+    fn despawn_recursive_supprime_toute_la_branche() {
+        let mut scene = Scene::default();
+        let racine = scene.world.spawn((Transform::IDENTITY,));
+        let enfant = scene.world.spawn((Transform::IDENTITY, Parent(racine)));
+        scene.world.spawn((Transform::IDENTITY, Parent(enfant)));
+        let autre = scene.world.spawn((Transform::IDENTITY,));
+
+        assert_eq!(scene.despawn_recursive(racine), 3);
+        assert_eq!(scene.entity_count(), 1);
+        assert!(scene.world.contains(autre));
+    }
+
+    #[test]
+    fn extraction_et_camera_utilisent_la_position_monde() {
+        let mut scene = Scene::default();
+        let vehicule = scene
+            .world
+            .spawn((Transform::from_translation(Vec3::new(10.0, 0.0, 0.0)),));
+        scene.world.spawn((
+            Transform::from_translation(Vec3::Y),
+            MeshRenderer::new(MeshHandle::from_index(0)),
+            Parent(vehicule),
+        ));
+        // Une caméra embarquée, 2 unités au-dessus du véhicule.
+        scene.world.spawn((
+            Transform::from_translation(Vec3::Y * 2.0),
+            Camera3d::default(),
+            Parent(vehicule),
+        ));
+        scene.update_transforms();
+
+        let mut draws = Vec::new();
+        scene.extract_draws(&mut draws);
+        assert_eq!(
+            draws[0].transform.transform_point3(Vec3::ZERO),
+            Vec3::new(10.0, 1.0, 0.0)
+        );
+        assert_eq!(scene.camera().unwrap().position, Vec3::new(10.0, 2.0, 0.0));
+    }
+
+    #[test]
+    fn la_lumiere_suit_l_orientation_de_son_entite() {
+        let mut scene = Scene::default();
+        // Sans soleil : seule l'ambiante.
+        assert_eq!(scene.lighting().intensity, 0.0);
+
+        // Un soleil penché de 90° vers le bas (rotation autour de X) : son -Z
+        // pointe alors vers -Y, les rayons tombent verticalement.
+        scene.world.spawn((
+            Transform::IDENTITY.with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+            DirectionalLight {
+                color: Color::RED,
+                intensity: 2.0,
+            },
+        ));
+        let lighting = scene.lighting();
+        assert!(
+            lighting.direction.abs_diff_eq(Vec3::NEG_Y, 1e-6),
+            "{}",
+            lighting.direction
+        );
+        assert_eq!(lighting.color, Color::RED);
+        assert_eq!(lighting.intensity, 2.0);
+        assert_eq!(lighting.ambient, scene.ambient_light);
     }
 }

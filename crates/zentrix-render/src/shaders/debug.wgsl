@@ -7,13 +7,18 @@
 // Le pipeline assemble les sommets deux par deux en segments (`LineList`).
 // =============================================================================
 
-// La même caméra que pour les maillages (bind group n°0, même buffer).
-struct CameraUniform {
+// Les mêmes données que pour les maillages (bind group n°0, même buffer).
+// Seule `view_proj` sert ici : pas d'éclairage pour les lignes de debug.
+struct FrameUniform {
     view_proj: mat4x4<f32>,
+    camera_position: vec4<f32>,
+    light_direction: vec4<f32>,
+    light_color: vec4<f32>,
+    ambient: vec4<f32>,
 };
 
 @group(0) @binding(0)
-var<uniform> camera: CameraUniform;
+var<uniform> frame: FrameUniform;
 
 // Côté Rust : `LineVertex::ATTRIBUTES` dans debug.rs.
 struct VertexInput {
@@ -29,7 +34,7 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = camera.view_proj * vec4<f32>(in.position, 1.0);
+    out.clip_position = frame.view_proj * vec4<f32>(in.position, 1.0);
     out.color = in.color;
     return out;
 }

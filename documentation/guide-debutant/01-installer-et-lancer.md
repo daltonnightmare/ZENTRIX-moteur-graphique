@@ -82,8 +82,8 @@ dans la fenêtre pour piloter la caméra :
 | `Maj` (maintenue)     | Aller 3 fois plus vite                          |
 | molette               | Régler la vitesse de déplacement                |
 | `P`                   | Mettre en pause l'animation des cubes           |
-| `F1`                  | Afficher / masquer la grille et les axes        |
-| `F2`                  | Afficher / masquer les boîtes des cubes         |
+| `F1`                  | Afficher / masquer la grille, les axes et la direction de la lumière |
+| `F2`                  | Afficher / masquer les boîtes et les liens parent → enfant |
 | `Échap`               | Libérer la souris, puis quitter                 |
 
 > Les captures de ce guide montrent parfois l'ancienne démo (un triangle sur fond animé) :

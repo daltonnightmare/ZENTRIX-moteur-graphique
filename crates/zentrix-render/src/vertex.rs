@@ -4,7 +4,7 @@
 use zentrix_core::math::Mat4;
 use zentrix_rhi::wgpu;
 
-/// Un sommet : une position 3D, une couleur et une coordonnée de texture.
+/// Un sommet : une position 3D, une couleur, une coordonnée de texture et une normale.
 ///
 /// # Les attributs magiques expliqués
 ///
@@ -18,14 +18,15 @@ use zentrix_rhi::wgpu;
 ///
 /// - `bytemuck::Zeroable` : une struct remplie de zéros est valide.
 ///
-/// En mémoire, un `Vertex` occupe 32 octets :
+/// En mémoire, un `Vertex` occupe 44 octets :
 ///
 /// ```text
-///  octet : 0      4      8      12     16     20     24     28     32
-///          ├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
-///          │  x   │  y   │  z   │  r   │  g   │  b   │  u   │  v   │
-///          └──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┘
-///           position (loc. 0)    color (loc. 1)       uv (loc. 2)
+///  octet : 0          12         24      32         44
+///          ├──────────┼──────────┼───────┼──────────┤
+///          │ x  y  z  │ r  g  b  │ u  v  │ nx ny nz │
+///          └──────────┴──────────┴───────┴──────────┘
+///           position   color      uv      normal
+///           (loc. 0)   (loc. 1)   (loc.2) (loc. 3)
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -48,15 +49,30 @@ pub struct Vertex {
     ///  (0,1) ───────────── (1,1)      (sampler en mode `Repeat`).
     /// ```
     pub uv: [f32; 2],
+    /// La **normale** : un vecteur de longueur 1, perpendiculaire à la
+    /// surface, qui indique vers où elle « regarde ». C'est elle qui permet de
+    /// calculer l'éclairage : une face tournée vers la lumière est claire,
+    /// une face qui lui tourne le dos est sombre.
+    ///
+    /// ```text
+    ///          ▲ normale
+    ///          │
+    ///   ───────┴───────  surface
+    /// ```
+    pub normal: [f32; 3],
 }
 
 impl Vertex {
     /// Construit un sommet. `const fn` : utilisable dans des constantes.
-    pub const fn new(position: [f32; 3], color: [f32; 3], uv: [f32; 2]) -> Self {
+    ///
+    /// Si on ne connaît pas encore la normale, on peut passer `[0.0; 3]` puis
+    /// appeler `MeshData::compute_normals` une fois le maillage complet.
+    pub const fn new(position: [f32; 3], color: [f32; 3], uv: [f32; 2], normal: [f32; 3]) -> Self {
         Self {
             position,
             color,
             uv,
+            normal,
         }
     }
 
@@ -65,10 +81,11 @@ impl Vertex {
     /// `vertex_attr_array!` est une **macro** (reconnaissable au `!`) : du code
     /// qui écrit du code. Elle calcule automatiquement les décalages (offsets)
     /// de chaque attribut dans la struct.
-    const ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
         0 => Float32x3, // position -> @location(0) dans le shader
         1 => Float32x3, // color    -> @location(1)
         2 => Float32x2, // uv       -> @location(2)
+        3 => Float32x3, // normal   -> @location(3)
     ];
 
     /// Décrit au GPU comment lire un tableau de `Vertex` dans un buffer.
@@ -79,7 +96,7 @@ impl Vertex {
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             // Combien d'octets sauter pour passer au sommet suivant.
-            // `size_of` est calculé à la compilation (32 ici).
+            // `size_of` est calculé à la compilation (44 ici).
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             // Avancer d'un élément à chaque SOMMET (l'alternative `Instance`
             // sert au rendu instancié : dessiner 1000 arbres en un appel).
@@ -111,12 +128,12 @@ pub struct InstanceRaw {
 }
 
 impl InstanceRaw {
-    /// Les locations 3 à 6 suivent celles du `Vertex` (0 à 2).
+    /// Les locations 4 à 7 suivent celles du `Vertex` (0 à 3).
     const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
-        3 => Float32x4, // colonne 0
-        4 => Float32x4, // colonne 1
-        5 => Float32x4, // colonne 2
-        6 => Float32x4, // colonne 3 (contient la translation)
+        4 => Float32x4, // colonne 0
+        5 => Float32x4, // colonne 1
+        6 => Float32x4, // colonne 2
+        7 => Float32x4, // colonne 3 (contient la translation)
     ];
 
     /// Décrit au GPU comment lire un tableau d'`InstanceRaw`.
@@ -148,8 +165,8 @@ mod tests {
 
     #[test]
     fn taille_du_vertex() {
-        // 8 flottants de 4 octets = 32 octets. Si ce test casse, le shader
+        // 11 flottants de 4 octets = 44 octets. Si ce test casse, le shader
         // et le layout ne correspondent plus à la struct !
-        assert_eq!(std::mem::size_of::<Vertex>(), 32);
+        assert_eq!(std::mem::size_of::<Vertex>(), 44);
     }
 }

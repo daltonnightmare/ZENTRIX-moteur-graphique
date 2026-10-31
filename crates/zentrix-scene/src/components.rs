@@ -7,6 +7,7 @@
 //! `Transform` (position, rotation, taille) vient de `zentrix-core` et sert
 //! directement de composant.
 
+use zentrix_core::Color;
 use zentrix_render::{MeshHandle, TextureHandle};
 
 /// « Cette entité est visible : dessine ce maillage avec cette texture. »
@@ -58,6 +59,28 @@ impl Default for Camera3d {
             fov_y: 60f32.to_radians(),
             near: 0.1,
             far: 200.0,
+        }
+    }
+}
+
+/// « Cette entité est une lumière directionnelle » (un soleil).
+///
+/// Comme pour `Camera3d`, la direction vient du `Transform` de l'entité :
+/// les rayons voyagent vers le -Z de son repère. Faire tourner l'entité fait
+/// donc tourner le soleil (cycle jour/nuit, par exemple).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DirectionalLight {
+    /// Couleur de la lumière (linéaire).
+    pub color: Color,
+    /// Multiplie la couleur. 1.0 = normal.
+    pub intensity: f32,
+}
+
+impl Default for DirectionalLight {
+    fn default() -> Self {
+        Self {
+            color: Color::WHITE,
+            intensity: 1.0,
         }
     }
 }

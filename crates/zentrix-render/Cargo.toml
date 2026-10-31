@@ -11,3 +11,9 @@ zentrix-core = { workspace = true }
 zentrix-rhi = { workspace = true }
 bytemuck = { workspace = true }
 log = { workspace = true }
+
+# Dépendances utilisées seulement par `cargo test`.
+[dev-dependencies]
+# naga est le compilateur de shaders de wgpu : il permet de vérifier les
+# fichiers .wgsl dans les tests, sans carte graphique.
+naga = { workspace = true }

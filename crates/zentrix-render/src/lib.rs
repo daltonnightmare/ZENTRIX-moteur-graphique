@@ -1,7 +1,7 @@
 //! # zentrix-render
 //!
 //! Le rendu **haut niveau** : il sait *quoi* dessiner (des maillages vus par
-//! une caméra, texturés, bientôt éclairés) et s'appuie sur
+//! une caméra, texturés et éclairés) et s'appuie sur
 //! `zentrix-rhi` pour *parler* au GPU.
 //!
 //! ## Utilisation
@@ -44,6 +44,7 @@ mod buffer;
 mod camera;
 mod debug;
 mod depth;
+mod lighting;
 mod mesh;
 mod pipeline;
 mod renderer;
@@ -52,6 +53,7 @@ mod vertex;
 
 pub use camera::Camera;
 pub use debug::DebugLines;
+pub use lighting::Lighting;
 pub use mesh::{MeshData, MeshHandle};
 pub use renderer::{DrawCommand, Renderer};
 pub use texture::TextureHandle;

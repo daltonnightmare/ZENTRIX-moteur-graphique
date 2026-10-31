@@ -52,6 +52,7 @@ winit = "0.30"          # crée la fenêtre, reçoit clavier/souris/redimensionn
 # --- GPU ---
 wgpu = "30"             # API graphique portable (Vulkan / DirectX 12 / Metal / WebGPU)
 pollster = "1"          # permet d'attendre une fonction `async` sans runtime async complet
+naga = { version = "30", features = ["wgsl-in"] } # compilateur de shaders de wgpu (tests des .wgsl)
 bytemuck = { version = "1", features = ["derive"] }  # convertit nos structs en octets pour le GPU
 
 # --- Fichiers ---

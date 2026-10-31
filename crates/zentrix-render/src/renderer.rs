@@ -1,6 +1,6 @@
 //! Le [`Renderer`] : point d'entrée du rendu pour l'application.
 
-use zentrix_core::math::Mat4;
+use zentrix_core::math::{Mat4, Vec3};
 use zentrix_core::{Color, Image};
 use zentrix_rhi::wgpu::util::DeviceExt; // apporte la méthode `create_buffer_init`
 use zentrix_rhi::{GpuContext, RhiError, wgpu};
@@ -9,6 +9,7 @@ use crate::buffer::GrowableBuffer;
 use crate::camera::Camera;
 use crate::debug::{DebugLines, LineVertex};
 use crate::depth::DepthTexture;
+use crate::lighting::Lighting;
 use crate::mesh::{Mesh, MeshData, MeshHandle};
 use crate::pipeline::{create_line_pipeline, create_mesh_pipeline};
 use crate::texture::{self, Texture, TextureHandle};
@@ -38,16 +39,48 @@ pub struct DrawCommand {
     pub transform: Mat4,
 }
 
-/// Les données de la caméra telles que le shader les lit (`CameraUniform`
-/// dans mesh.wgsl).
+/// Les données communes à tous les objets de l'image, telles que le shader
+/// les lit (`FrameUniform` dans mesh.wgsl) : la caméra et la lumière.
 ///
-/// Attention à l'alignement : WGSL impose des règles strictes sur la taille
-/// des uniforms (multiples de 16 octets). Une `mat4x4<f32>` fait 64 octets,
-/// tout va bien ; si on ajoute un jour un `f32` seul, il faudra du remplissage.
+/// # L'alignement
+///
+/// WGSL impose qu'un `vec3<f32>` d'un uniform commence à un multiple de 16
+/// octets. Plutôt que d'ajouter des octets de remplissage à la main, on
+/// n'utilise que des `vec4` (16 octets) : le 4e nombre sert parfois (alpha,
+/// intensité) ou vaut simplement 0. Total : 64 + 4 × 16 = 128 octets.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct CameraUniform {
+struct FrameUniform {
     view_proj: [[f32; 4]; 4],
+    /// Position de l'œil (pour le reflet spéculaire). w inutilisé.
+    camera_position: [f32; 4],
+    /// Direction des rayons, normalisée. w inutilisé.
+    light_direction: [f32; 4],
+    /// Couleur × intensité de la lumière. w inutilisé.
+    light_color: [f32; 4],
+    /// Lumière ambiante. w inutilisé.
+    ambient: [f32; 4],
+}
+
+impl FrameUniform {
+    fn new(view_proj: Mat4, camera: &Camera, lighting: &Lighting) -> Self {
+        let light = lighting.color;
+        let k = lighting.intensity;
+        let ambient = lighting.ambient;
+        Self {
+            view_proj: view_proj.to_cols_array_2d(),
+            camera_position: camera.position.extend(1.0).to_array(),
+            // `normalize_or` : une direction nulle (erreur de l'appelant)
+            // retombe sur « droit vers le bas » au lieu de produire des NaN.
+            light_direction: lighting
+                .direction
+                .normalize_or(Vec3::NEG_Y)
+                .extend(0.0)
+                .to_array(),
+            light_color: [light.r * k, light.g * k, light.b * k, 0.0],
+            ambient: [ambient.r, ambient.g, ambient.b, 0.0],
+        }
+    }
 }
 
 /// Nombre d'instances que le buffer peut contenir au départ. Il grandit
@@ -66,6 +99,8 @@ const INITIAL_LINE_VERTEX_CAPACITY: usize = 1024;
 pub struct Renderer {
     /// Couleur de fond utilisée pour effacer l'écran à chaque image.
     pub clear_color: Color,
+    /// L'éclairage de la scène, envoyé au GPU à chaque image.
+    pub lighting: Lighting,
     pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
 
@@ -77,8 +112,8 @@ pub struct Renderer {
     texture_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
 
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
+    frame_buffer: wgpu::Buffer,
+    frame_bind_group: wgpu::BindGroup,
 
     /// Les matrices de toutes les instances de l'image, à la suite.
     instance_buffer: GrowableBuffer,
@@ -101,14 +136,16 @@ impl Renderer {
     pub fn new(gpu: &GpuContext) -> Self {
         let device = gpu.device();
 
-        // --- La caméra : un uniform buffer + son bind group -------------------
-        // Le LAYOUT décrit la forme (« un uniform buffer, lu par le vertex
-        // shader ») ; le BIND GROUP relie cette forme à un buffer précis.
-        let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Camera Bind Group Layout"),
+        // --- Caméra et lumière : un uniform buffer + son bind group -----------
+        // Le LAYOUT décrit la forme (« un uniform buffer, lu par les shaders
+        // de sommets et de pixels ») ; le BIND GROUP relie cette forme à un
+        // buffer précis.
+        let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Frame Bind Group Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0, // `@binding(0)` dans le shader
-                visibility: wgpu::ShaderStages::VERTEX,
+                // Le fragment shader en a besoin pour la lumière.
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -119,20 +156,22 @@ impl Renderer {
         });
 
         // COPY_DST : on pourra y écrire depuis le CPU à chaque image (`write_buffer`).
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Buffer"),
-            contents: bytemuck::bytes_of(&CameraUniform {
-                view_proj: Mat4::IDENTITY.to_cols_array_2d(),
-            }),
+        let frame_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Frame Buffer"),
+            contents: bytemuck::bytes_of(&FrameUniform::new(
+                Mat4::IDENTITY,
+                &Camera::default(),
+                &Lighting::default(),
+            )),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Camera Bind Group"),
-            layout: &camera_layout,
+        let frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Frame Bind Group"),
+            layout: &frame_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: camera_buffer.as_entire_binding(),
+                resource: frame_buffer.as_entire_binding(),
             }],
         });
 
@@ -140,24 +179,21 @@ impl Renderer {
         let texture_layout = texture::create_bind_group_layout(device);
         let sampler = texture::create_sampler(device);
 
-        let pipeline = create_mesh_pipeline(
-            device,
-            gpu.surface_format(),
-            &camera_layout,
-            &texture_layout,
-        );
-        let line_pipeline = create_line_pipeline(device, gpu.surface_format(), &camera_layout);
+        let pipeline =
+            create_mesh_pipeline(device, gpu.surface_format(), &frame_layout, &texture_layout);
+        let line_pipeline = create_line_pipeline(device, gpu.surface_format(), &frame_layout);
 
         let mut renderer = Self {
             clear_color: Color::default(),
+            lighting: Lighting::default(),
             pipeline,
             line_pipeline,
             meshes: Vec::new(),
             textures: Vec::new(),
             texture_layout,
             sampler,
-            camera_buffer,
-            camera_bind_group,
+            frame_buffer,
+            frame_bind_group,
             instance_buffer: GrowableBuffer::new(
                 device,
                 "Instance Buffer",
@@ -232,11 +268,10 @@ impl Renderer {
         // 3. Mettre à jour les données de l'image sur le GPU.
         let (width, height) = gpu.size();
         let aspect = width as f32 / height as f32;
-        let camera_uniform = CameraUniform {
-            view_proj: camera.view_projection(aspect).to_cols_array_2d(),
-        };
+        let frame_uniform =
+            FrameUniform::new(camera.view_projection(aspect), camera, &self.lighting);
         gpu.queue()
-            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera_uniform));
+            .write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&frame_uniform));
         self.upload_instances(gpu, draws);
         self.line_buffer.write(
             gpu.device(),
@@ -295,7 +330,7 @@ impl Renderer {
             });
 
             render_pass.set_pipeline(&self.pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
             render_pass.set_vertex_buffer(1, self.instance_buffer.buffer().slice(..));
 
             // `self.instances` est trié par (texture, maillage) : les instances
@@ -364,5 +399,27 @@ impl Renderer {
             gpu.queue(),
             bytemuck::cast_slice(&self.instance_data),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn taille_du_frame_uniform() {
+        // Doit correspondre à `FrameUniform` dans mesh.wgsl et debug.wgsl :
+        // une mat4 (64 octets) + 4 vec4 (4 × 16 octets).
+        assert_eq!(std::mem::size_of::<FrameUniform>(), 128);
+    }
+
+    #[test]
+    fn une_direction_de_lumiere_nulle_ne_produit_pas_de_nan() {
+        let lighting = Lighting {
+            direction: Vec3::ZERO,
+            ..Lighting::default()
+        };
+        let uniform = FrameUniform::new(Mat4::IDENTITY, &Camera::default(), &lighting);
+        assert_eq!(uniform.light_direction, [0.0, -1.0, 0.0, 0.0]);
     }
 }

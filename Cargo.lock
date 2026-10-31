@@ -2899,6 +2899,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "log",
+ "naga",
  "zentrix-core",
  "zentrix-rhi",
 ]
@@ -2918,6 +2919,7 @@ name = "zentrix-scene"
 version = "0.1.0"
 dependencies = [
  "hecs",
+ "log",
  "zentrix-core",
  "zentrix-render",
 ]

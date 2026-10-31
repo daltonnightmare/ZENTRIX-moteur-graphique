@@ -11,6 +11,8 @@
 use zentrix_rhi::wgpu;
 use zentrix_rhi::wgpu::util::DeviceExt;
 
+use zentrix_core::math::Vec3;
+
 use crate::vertex::Vertex;
 
 /// Une géométrie en mémoire CPU : des sommets et des indices.
@@ -49,9 +51,24 @@ impl MeshData {
     pub fn triangle() -> Self {
         Self {
             vertices: vec![
-                Vertex::new([-0.5, -0.5, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0]),
-                Vertex::new([0.5, -0.5, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0]),
-                Vertex::new([0.0, 0.5, 0.0], [0.0, 0.0, 1.0], [0.5, 0.0]),
+                Vertex::new(
+                    [-0.5, -0.5, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0],
+                    [0.0, 0.0, 1.0],
+                ),
+                Vertex::new(
+                    [0.5, -0.5, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [1.0, 1.0],
+                    [0.0, 0.0, 1.0],
+                ),
+                Vertex::new(
+                    [0.0, 0.5, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [0.5, 0.0],
+                    [0.0, 0.0, 1.0],
+                ),
             ],
             indices: vec![0, 1, 2],
         }
@@ -71,7 +88,7 @@ impl MeshData {
             vertices: corners
                 .into_iter()
                 .zip(QUAD_UVS)
-                .map(|(position, uv)| Vertex::new(position, color, uv))
+                .map(|(position, uv)| Vertex::new(position, color, uv, [0.0, 1.0, 0.0]))
                 .collect(),
             indices: vec![0, 1, 2, 0, 2, 3],
         }
@@ -103,12 +120,44 @@ impl MeshData {
                 corners
                     .into_iter()
                     .zip(QUAD_UVS)
-                    .map(|(position, uv)| Vertex::new(position, color, uv)),
+                    .map(|(position, uv)| Vertex::new(position, color, uv, [0.0; 3])),
             );
             // Deux triangles par face : (0, 1, 2) et (0, 2, 3).
             mesh.indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
         }
+        // Chaque face a ses propres sommets : la moyenne des normales autour
+        // d'un sommet est donc exactement la normale de sa face.
+        mesh.compute_normals();
         mesh
+    }
+
+    /// Calcule la normale de chaque sommet à partir des triangles.
+    ///
+    /// Pour chaque triangle, le produit vectoriel de deux de ses côtés donne
+    /// un vecteur perpendiculaire (règle de la main droite : il sort de la
+    /// face avant, celle dont les sommets tournent dans le sens anti-horaire).
+    /// Sa longueur vaut le double de l'aire du triangle : en additionnant ces
+    /// vecteurs sans les normaliser, les grands triangles comptent davantage.
+    ///
+    /// Un sommet partagé par plusieurs triangles reçoit la moyenne de leurs
+    /// normales : la surface paraît **lisse** (une sphère). Pour des arêtes
+    /// **vives** (un cube), chaque face doit avoir ses propres sommets.
+    pub fn compute_normals(&mut self) {
+        let mut normals = vec![Vec3::ZERO; self.vertices.len()];
+        // `as_chunks::<3>()` découpe les indices en tableaux `[u32; 3]` (un par
+        // triangle) ; `.0` ignore un éventuel reste incomplet.
+        for &[a, b, c] in self.indices.as_chunks::<3>().0 {
+            let [a, b, c] = [a, b, c].map(|i| i as usize);
+            let position = |i: usize| Vec3::from(self.vertices[i].position);
+            let face = (position(b) - position(a)).cross(position(c) - position(a));
+            for i in [a, b, c] {
+                normals[i] += face;
+            }
+        }
+        for (vertex, normal) in self.vertices.iter_mut().zip(normals) {
+            // `normalize_or_zero` : un sommet isolé (sans triangle) garde (0, 0, 0).
+            vertex.normal = normal.normalize_or_zero().to_array();
+        }
     }
 
     /// Variante « builder » : donne la même couleur à tous les sommets.
@@ -182,7 +231,6 @@ impl Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zentrix_core::math::Vec3;
 
     #[test]
     fn cube_24_sommets_36_indices() {
@@ -194,6 +242,43 @@ mod tests {
                 .iter()
                 .all(|&i| (i as usize) < cube.vertices.len())
         );
+    }
+
+    #[test]
+    fn les_normales_du_cube_sortent_des_faces() {
+        let cube = MeshData::cube();
+        for vertex in &cube.vertices {
+            let normal = Vec3::from(vertex.normal);
+            assert!(
+                (normal.length() - 1.0).abs() < 1e-6,
+                "normale de longueur 1"
+            );
+            // La normale d'une face de cube est l'un des 6 axes, et pointe
+            // du même côté que le sommet (vers l'extérieur).
+            assert!(normal.dot(Vec3::from(vertex.position)) > 0.0);
+            assert_eq!(normal.abs().max_element(), 1.0, "{normal}");
+        }
+    }
+
+    #[test]
+    fn normales_lissees_sur_un_sommet_partage() {
+        // Deux triangles en « toit » partagent l'arête 0-1 : la normale des
+        // sommets partagés est la moyenne des deux pentes, donc verticale.
+        let mut toit = MeshData {
+            vertices: [
+                [0.0, 1.0, 0.0],
+                [0.0, 1.0, -1.0],
+                [-1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ]
+            .map(|p| Vertex::new(p, [1.0; 3], [0.0; 2], [0.0; 3]))
+            .to_vec(),
+            // Sens anti-horaire vu du dessus : pente gauche (0, 1, 2), pente droite (0, 3, 1).
+            indices: vec![0, 1, 2, 0, 3, 1],
+        };
+        toit.compute_normals();
+        let partage = Vec3::from(toit.vertices[0].normal);
+        assert!(partage.abs_diff_eq(Vec3::Y, 1e-6), "{partage}");
     }
 
     #[test]

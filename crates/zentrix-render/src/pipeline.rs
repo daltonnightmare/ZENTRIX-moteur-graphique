@@ -19,12 +19,12 @@ use crate::vertex::{InstanceRaw, Vertex};
 /// `pub(crate)` : visible dans toute la crate `zentrix-render`, mais pas à
 /// l'extérieur. C'est un détail d'implémentation.
 ///
-/// `camera_layout` décrit le bind group n°0 (la matrice de la caméra) : le
-/// pipeline doit connaître sa *forme* à l'avance, le contenu viendra à chaque image.
+/// `frame_layout` décrit le bind group n°0 (caméra et lumière) : le pipeline
+/// doit connaître sa *forme* à l'avance, le contenu viendra à chaque image.
 pub(crate) fn create_mesh_pipeline(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
-    camera_layout: &wgpu::BindGroupLayout,
+    frame_layout: &wgpu::BindGroupLayout,
     texture_layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     // `include_str!` lit le fichier À LA COMPILATION et l'insère dans le
@@ -38,11 +38,11 @@ pub(crate) fn create_mesh_pipeline(
 
     // Le « layout » décrit les ressources externes du shader (textures,
     // uniforms...). L'élément n°i de la liste correspond à `@group(i)` dans le
-    // shader : le groupe 0 pour la caméra (change une fois par image), le
+    // shader : le groupe 0 pour la caméra et la lumière (une fois par image), le
     // groupe 1 pour la texture (change entre deux objets).
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Mesh Pipeline Layout"),
-        bind_group_layouts: &[Some(camera_layout), Some(texture_layout)],
+        bind_group_layouts: &[Some(frame_layout), Some(texture_layout)],
         immediate_size: 0,
     });
 
@@ -115,11 +115,11 @@ pub(crate) fn create_mesh_pipeline(
 /// - pas d'élimination des faces arrière (une ligne n'a pas de face) ;
 /// - test de profondeur `LessEqual` **sans écriture** : une ligne derrière
 ///   un cube est cachée, mais une ligne ne cache jamais rien ;
-/// - pas de texture : seul le bind group de la caméra est utilisé.
+/// - pas de texture ni d'éclairage : seul le bind group n°0 (la caméra) est utilisé.
 pub(crate) fn create_line_pipeline(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
-    camera_layout: &wgpu::BindGroupLayout,
+    frame_layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Debug Line Shader"),
@@ -128,7 +128,7 @@ pub(crate) fn create_line_pipeline(
 
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Debug Line Pipeline Layout"),
-        bind_group_layouts: &[Some(camera_layout)],
+        bind_group_layouts: &[Some(frame_layout)],
         immediate_size: 0,
     });
 
@@ -167,4 +167,31 @@ pub(crate) fn create_line_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    /// Compile et valide un shader WGSL avec naga, exactement comme le fera
+    /// wgpu au démarrage, mais sans GPU : une faute de frappe dans un .wgsl
+    /// est ainsi détectée par `cargo test` au lieu de planter au lancement.
+    fn valider(nom: &str, source: &str) {
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{nom} : {}", e.emit_to_string(source)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{nom} invalide : {e:?}"));
+    }
+
+    #[test]
+    fn le_shader_des_maillages_est_valide() {
+        valider("mesh.wgsl", include_str!("shaders/mesh.wgsl"));
+    }
+
+    #[test]
+    fn le_shader_des_lignes_est_valide() {
+        valider("debug.wgsl", include_str!("shaders/debug.wgsl"));
+    }
 }

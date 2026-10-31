@@ -46,6 +46,11 @@ L'ordre alphabétique des noms de fichiers donne donc l'ordre chronologique.
 | 2026-10-31 | amelioration | [Buffer GPU extensible commun, FPS dans le titre](2026-10-31_amelioration_buffer-extensible-et-fps.md) |
 | 2026-10-31 | changement-majeur | [Scène et ECS (`zentrix-scene`)](2026-10-31_changement-majeur_scene-et-ecs.md) |
 | 2026-10-31 | suppression | [État « manuel » de la démo](2026-10-31_suppression_etat-manuel-de-la-demo.md) |
+| 2026-10-31 | changement-majeur | [Hiérarchie de transformations](2026-10-31_changement-majeur_hierarchie-de-transformations.md) |
+| 2026-10-31 | modification | [Extraction en position monde, boîtes de debug généralisées](2026-10-31_modification_extraction-position-monde.md) |
+| 2026-10-31 | changement-majeur | [Éclairage : normales, lumière directionnelle, Lambert + Blinn-Phong](2026-10-31_changement-majeur_eclairage.md) |
+| 2026-10-31 | amelioration | [Validation des shaders WGSL dans les tests](2026-10-31_amelioration_validation-des-shaders.md) |
+| 2026-10-31 | modification | [API : `Vertex` avec normale, `FrameUniform`, lumière de la scène](2026-10-31_modification_api-vertex-normale-et-frame-uniform.md) |
 
 > Les entrées du 2026-07-13 et du 2026-10-18 ont été reconstituées a posteriori à partir de
 > l'historique git (`git log --stat`).

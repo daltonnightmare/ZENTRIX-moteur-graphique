@@ -13,8 +13,8 @@ Ce chapitre relie la base actuelle aux documents de conception : [GAME_ENGINE_DE
 | **Phase 0** — Vision, périmètre | ✅ Rust + wgpu, bureau d'abord, workspace multi-crates |
 | **Phase 1** — Fondation et boucle d'exécution | ✅ fenêtre, événements, delta time, FPS, logs, arrêt propre · ⏳ fichier de configuration |
 | **Phase 2** — Noyau de rendu | ✅ **terminée** : GPU + surface + pipeline · maillages, uniforms, caméra 3D, depth buffer, instanciation · entrées + caméra libre · textures · rendu de debug |
-| **Phase 3** — Scène et ECS | 🟡 **en cours** : `zentrix-scene` (hecs), composants `Transform` / `MeshRenderer` / `Camera3d` / `Name`, extraction vers le rendu ✅ · hiérarchie, sérialisation ⏳ |
-| Phase 4+ — éclairage, modèles 3D, audio, physique... | ⏳ à venir |
+| **Phase 3** — Scène et ECS | 🟡 **en cours** : `zentrix-scene` (hecs), composants `Transform` / `MeshRenderer` / `Camera3d` / `Name`, extraction vers le rendu ✅ · hiérarchie (`Parent`, `GlobalTransform`) ✅ · sérialisation ⏳ |
+| Phase 4+ — éclairage, modèles 3D, audio, physique... | 🟡 éclairage simple (Lambert + Blinn-Phong) ✅ · modèles 3D, ombres, audio, physique ⏳ |
 
 ---
 
@@ -111,7 +111,12 @@ Chaque étape produit quelque chose de **visible**, ce qui permet de valider qu'
 > [demo.rs](../../crates/zentrix-app/src/demo.rs) définit ses propres composants (`Spin`,
 > `FlyCamera`) et ses systèmes (`spin_system`, `fly_camera_system`, `bounds_system`).
 
-### Étape I — Hiérarchie de transformations ⭐⭐⭐ ← prochaine étape
+### Étape I — Hiérarchie de transformations ⭐⭐⭐ ✅
+
+> ✅ Réalisée : [hierarchy.rs](../../crates/zentrix-scene/src/hierarchy.rs). Seul `Parent` est
+> nécessaire (pas de composant `Children`) : `Scene::update_transforms` calcule les
+> `GlobalTransform` avec mémorisation et une profondeur maximale (protection contre les
+> cycles). `Scene::despawn_recursive` supprime une branche entière.
 
 - Composants `Parent` / `Children` et un `GlobalTransform` calculé : un objet suit son parent
   (une roue suit la voiture, une arme suit la main).
@@ -119,14 +124,20 @@ Chaque étape produit quelque chose de **visible**, ce qui permet de valider qu'
 
 **Démo** : un « système solaire » (une lune qui tourne autour d'une planète qui tourne autour du soleil).
 
-### Étape J — Éclairage simple ⭐⭐⭐
+### Étape J — Éclairage simple ⭐⭐⭐ ✅
+
+> ✅ Réalisée : normales dans `Vertex` (`MeshData::compute_normals`), `Lighting` dans
+> [lighting.rs](../../crates/zentrix-render/src/lighting.rs), uniform `FrameUniform` (caméra +
+> lumière), diffuse + spéculaire dans `mesh.wgsl`. Côté scène : composant `DirectionalLight`
+> (direction = -Z de son `Transform`) et `Scene::ambient_light`. Les shaders sont désormais
+> validés par `cargo test` (naga), sans GPU.
 
 - Ajouter les **normales** dans `Vertex`, une lumière directionnelle + ambiante dans un uniform.
 - Éclairage de Lambert (diffus) dans `mesh.wgsl`, puis Blinn-Phong (reflets).
 
 **Démo** : des cubes qui ont une face éclairée et une face dans l'ombre.
 
-### Étape K — Modèles 3D (glTF) ⭐⭐⭐⭐
+### Étape K — Modèles 3D (glTF) ⭐⭐⭐⭐ ← prochaine étape
 
 - Dans `zentrix-assets` : charger des fichiers `.gltf` / `.glb` (crate `gltf`) en `MeshData` + textures.
 

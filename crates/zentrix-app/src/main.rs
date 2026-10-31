@@ -31,8 +31,8 @@
 //! | `Maj` (maintenue)   | aller 3 fois plus vite                        |
 //! | molette             | régler la vitesse                             |
 //! | `P`                 | mettre en pause l'animation des cubes         |
-//! | `F1`                | afficher / masquer la grille et les axes      |
-//! | `F2`                | afficher / masquer les boîtes des cubes       |
+//! | `F1`                | afficher / masquer la grille, les axes et la direction de la lumière |
+//! | `F2`                | afficher / masquer les boîtes et les liens parent → enfant |
 //! | `Échap`             | libérer la souris, puis quitter               |
 
 mod demo;
@@ -44,7 +44,7 @@ use std::sync::Arc;
 // elle enrichit le message d'erreur pour savoir OÙ l'erreur s'est produite.
 use anyhow::Context;
 
-use zentrix_core::math::Vec3;
+use zentrix_core::math::{Mat4, Quat, Vec3};
 use zentrix_core::{Color, Image};
 use zentrix_platform::{
     Application, Input, KeyCode, MouseButton, Window, WindowConfig, set_cursor_captured,
@@ -108,7 +108,7 @@ struct ZentrixApp {
     draws: Vec<DrawCommand>,
     /// Les lignes de debug de l'image en cours.
     debug: DebugLines,
-    /// F1 : grille et axes ; F2 : boîtes englobantes des cubes.
+    /// F1 : grille et axes ; F2 : boîtes englobantes et liens parent → enfant.
     show_grid: bool,
     show_bounds: bool,
     fps: FpsCounter,
@@ -199,6 +199,9 @@ impl Application for ZentrixApp {
             ground: renderer.add_mesh(&gpu, &MeshData::plane([1.0; 3]).with_uv_scale(8.0)),
             // Les textures : une image chargée depuis le disque, une autre générée.
             crate_texture: renderer.add_texture(&gpu, &load_crate_image()),
+            sun: renderer.add_mesh(&gpu, &MeshData::cube().with_color([1.0, 0.75, 0.2])),
+            planet: renderer.add_mesh(&gpu, &MeshData::cube().with_color([0.25, 0.5, 1.0])),
+            moon: renderer.add_mesh(&gpu, &MeshData::cube().with_color([0.8, 0.8, 0.85])),
             ground_texture: renderer.add_texture(
                 &gpu,
                 &Image::checkerboard(
@@ -249,6 +252,9 @@ impl Application for ZentrixApp {
         // La souris ne fait tourner la vue que si elle est capturée.
         demo::fly_camera_system(&mut self.scene.world, input, dt, self.mouse_captured);
 
+        // Les positions dans le monde, une fois TOUS les déplacements faits.
+        self.scene.update_transforms();
+
         // --- L'extraction : ce que le rendu doit dessiner ----------------------
         // Le Renderer ne connaît pas l'ECS : la scène lui prépare des listes simples.
         self.draws.clear();
@@ -272,6 +278,18 @@ impl Application for ZentrixApp {
             self.debug
                 .grid(ground, 16.0, 16, Color::rgb(0.30, 0.32, 0.42));
             self.debug.axes(ground, 3.0);
+
+            // La direction de la lumière : une flèche jaune qui « tombe »
+            // depuis le ciel, dans le sens des rayons.
+            let direction = self.scene.lighting().direction.normalize_or_zero();
+            let start = Vec3::new(0.0, 7.0, 0.0);
+            let end = start + direction * 3.0;
+            let yellow = Color::rgb(1.0, 0.9, 0.3);
+            self.debug.line(start, end, yellow);
+            self.debug.wire_box(
+                Mat4::from_scale_rotation_translation(Vec3::splat(0.15), Quat::IDENTITY, end),
+                yellow,
+            );
         }
 
         if self.show_bounds {
@@ -288,6 +306,7 @@ impl Application for ZentrixApp {
             // Sans entité caméra, on utilise une caméra par défaut plutôt que
             // de ne rien afficher.
             let camera = self.scene.camera().unwrap_or_default();
+            g.renderer.lighting = self.scene.lighting();
             g.renderer
                 .render(&mut g.gpu, &camera, &self.draws, &self.debug)?;
             // `pre_present_notify` n'est pas obligatoire, mais aide winit à
