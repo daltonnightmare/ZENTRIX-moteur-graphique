@@ -5,6 +5,8 @@ use std::sync::Arc;
 use winit::keyboard::KeyCode;
 use winit::window::Window;
 
+use crate::input::Input;
+
 /// Paramètres de création de la fenêtre.
 #[derive(Debug, Clone)]
 pub struct WindowConfig {
@@ -52,6 +54,12 @@ impl Default for WindowConfig {
 /// on_start ──▶ [ on_update ──▶ on_render ] ──▶ [ on_update ──▶ on_render ] ──▶ ... ──▶ on_exit
 ///                  ▲ entre deux images : on_resize, on_key (quand ils arrivent)
 /// ```
+///
+/// Pour le clavier, deux styles sont possibles :
+///
+/// - réagir à l'événement dans [`Application::on_key`] ;
+/// - ou interroger l'état dans [`Application::on_update`] via [`Input`]
+///   (`input.is_key_down(...)`), ce qui convient mieux aux déplacements.
 pub trait Application {
     /// Appelée **une seule fois**, juste après la création de la fenêtre.
     /// C'est ici qu'on initialise le GPU.
@@ -82,8 +90,11 @@ pub trait Application {
     fn on_key(&mut self, _key: KeyCode, _pressed: bool) {}
 
     /// Mise à jour de la logique, une fois par image, **avant** le rendu.
-    /// `dt` = delta time en secondes (voir `zentrix_core::FrameTimer`).
-    fn on_update(&mut self, _dt: f32) {}
+    ///
+    /// - `dt` = delta time en secondes (voir `zentrix_core::FrameTimer`) ;
+    /// - `input` = l'état du clavier et de la souris pour cette image. Il est
+    ///   seulement **prêté** (`&`) : l'application le lit, la plateforme le met à jour.
+    fn on_update(&mut self, _dt: f32, _input: &Input) {}
 
     /// Dessine une image. Une erreur renvoyée ici arrête l'application.
     fn on_render(&mut self) -> anyhow::Result<()>;

@@ -1,5 +1,7 @@
-//! Le format d'un sommet (« vertex ») tel que le GPU le lit.
+//! Les formats de données lus par le vertex shader : les sommets ([`Vertex`])
+//! et les instances ([`InstanceRaw`]).
 
+use zentrix_core::math::Mat4;
 use zentrix_rhi::wgpu;
 
 /// Un sommet : une position 3D et une couleur.
@@ -26,17 +28,22 @@ use zentrix_rhi::wgpu;
 ///           position (location 0)      color (location 1)
 /// ```
 #[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
-    /// Position en « coordonnées normalisées » (NDC) pour l'instant :
-    /// x et y vont de -1 (gauche/bas) à +1 (droite/haut), quelle que soit la
-    /// taille de la fenêtre. Une caméra viendra transformer ça plus tard.
+    /// Position dans le repère **de l'objet** (« object space ») : le cube va
+    /// de -0.5 à 0.5 quel que soit l'endroit où il est placé. C'est la matrice
+    /// modèle de chaque instance, puis la caméra, qui le placent à l'écran.
     pub position: [f32; 3],
     /// Couleur RGB entre 0 et 1.
     pub color: [f32; 3],
 }
 
 impl Vertex {
+    /// Construit un sommet. `const fn` : utilisable dans des constantes.
+    pub const fn new(position: [f32; 3], color: [f32; 3]) -> Self {
+        Self { position, color }
+    }
+
     /// La liste des attributs, dans le même ordre que les `@location(n)` du shader.
     ///
     /// `vertex_attr_array!` est une **macro** (reconnaissable au `!`) : du code
@@ -65,9 +72,62 @@ impl Vertex {
     }
 }
 
+/// Les données propres à **une instance** (un exemplaire d'un maillage) :
+/// sa matrice modèle, 16 `f32` = 64 octets.
+///
+/// # Le rendu instancié
+///
+/// Pour dessiner 25 cubes, on pourrait faire 25 appels `draw`. À la place, on
+/// range les 25 matrices dans un seul buffer et on fait **un** appel
+/// `draw_indexed(.., 0..25)`. Le GPU lit alors ce buffer avec
+/// `VertexStepMode::Instance` : il avance d'une matrice à chaque nouvelle
+/// instance (et non à chaque sommet).
+///
+/// Un attribut de sommet fait au plus 4 composantes (`Float32x4`) : la matrice
+/// 4×4 est donc découpée en ses 4 colonnes, recomposées dans le shader.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct InstanceRaw {
+    /// Les 4 colonnes de la matrice (glam stocke les matrices colonne par
+    /// colonne, exactement comme WGSL).
+    pub model: [[f32; 4]; 4],
+}
+
+impl InstanceRaw {
+    /// Les locations 2 à 5 suivent celles du `Vertex` (0 et 1).
+    const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+        2 => Float32x4, // colonne 0
+        3 => Float32x4, // colonne 1
+        4 => Float32x4, // colonne 2
+        5 => Float32x4, // colonne 3 (contient la translation)
+    ];
+
+    /// Décrit au GPU comment lire un tableau d'`InstanceRaw`.
+    pub fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &Self::ATTRIBUTES,
+        }
+    }
+}
+
+impl From<Mat4> for InstanceRaw {
+    fn from(model: Mat4) -> Self {
+        Self {
+            model: model.to_cols_array_2d(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn taille_de_l_instance() {
+        assert_eq!(std::mem::size_of::<InstanceRaw>(), 64);
+    }
 
     #[test]
     fn taille_du_vertex() {

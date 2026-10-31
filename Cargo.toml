@@ -51,7 +51,7 @@ pollster = "1"          # permet d'attendre une fonction `async` sans runtime as
 bytemuck = { version = "1", features = ["derive"] }  # convertit nos structs en octets pour le GPU
 
 # --- Mathématiques ---
-glam = { version = "0.34", features = ["bytemuck"] } # vecteurs / matrices (servira pour la caméra)
+glam = { version = "0.34", features = ["bytemuck"] } # vecteurs / matrices / quaternions (ré-exporté par zentrix_core::math)
 
 # --- Journalisation (logs) ---
 log = "0.4"             # "façade" : les crates écrivent `log::info!(...)`

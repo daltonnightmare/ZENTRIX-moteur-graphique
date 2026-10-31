@@ -264,9 +264,15 @@ En sortant de portée, `runner` est détruit, donc `app`, donc `graphics`, donc 
 | Qui crée la fenêtre ? | `PlatformRunner::resumed` | `crates/zentrix-platform/src/runner.rs` |
 | Qui décide de l'ordre update/render ? | `PlatformRunner::window_event` | `crates/zentrix-platform/src/runner.rs` |
 | Qui choisit le GPU ? | `GpuContext::new` | `crates/zentrix-rhi/src/context.rs` |
-| Où sont les sommets du triangle ? | `const TRIANGLE` | `crates/zentrix-render/src/renderer.rs` |
-| Où est le shader ? | `triangle.wgsl` | `crates/zentrix-render/src/shaders/` |
-| Où est la couleur de fond animée ? | `ZentrixApp::on_update` | `crates/zentrix-app/src/main.rs` |
+| Où sont les sommets des formes ? | `MeshData::triangle` / `cube` / `plane` | `crates/zentrix-render/src/mesh.rs` |
+| Où est le shader ? | `mesh.wgsl` | `crates/zentrix-render/src/shaders/` |
+| Où est la caméra ? | `Camera` | `crates/zentrix-render/src/camera.rs` |
+| Où est construite la scène ? | `ZentrixApp::on_update` | `crates/zentrix-app/src/main.rs` |
+
+> ℹ️ Ce chapitre décrit la v1 (un triangle codé en dur). Depuis, les étapes A à D de la
+> [feuille de route](07-feuille-de-route.md) ont été réalisées : `const TRIANGLE` est devenu
+> `MeshData::triangle()`, `triangle.wgsl` est devenu `mesh.wgsl` et `create_triangle_pipeline`
+> est devenu `create_mesh_pipeline`. Le principe expliqué ici reste identique.
 
 ---
 

@@ -3,9 +3,10 @@
 
 use zentrix_rhi::wgpu;
 
-use crate::vertex::Vertex;
+use crate::depth::DEPTH_FORMAT;
+use crate::vertex::{InstanceRaw, Vertex};
 
-/// Crée le pipeline qui dessine des triangles colorés.
+/// Crée le pipeline qui dessine des maillages 3D colorés.
 ///
 /// Un pipeline regroupe **tout l'état** du GPU pour un type de dessin :
 /// quels shaders, quel format de sommets, comment assembler les triangles,
@@ -16,39 +17,45 @@ use crate::vertex::Vertex;
 ///
 /// `pub(crate)` : visible dans toute la crate `zentrix-render`, mais pas à
 /// l'extérieur. C'est un détail d'implémentation.
-pub(crate) fn create_triangle_pipeline(
+///
+/// `camera_layout` décrit le bind group n°0 (la matrice de la caméra) : le
+/// pipeline doit connaître sa *forme* à l'avance, le contenu viendra à chaque image.
+pub(crate) fn create_mesh_pipeline(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
+    camera_layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     // `include_str!` lit le fichier À LA COMPILATION et l'insère dans le
     // programme sous forme de texte : pas besoin de livrer le .wgsl à côté
     // de l'exécutable. (Inconvénient : modifier le shader impose de recompiler.
     // Le « hot-reload » des shaders est prévu plus tard dans la feuille de route.)
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Triangle Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/triangle.wgsl").into()),
+        label: Some("Mesh Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mesh.wgsl").into()),
     });
 
     // Le « layout » décrit les ressources externes du shader (textures,
-    // uniforms comme la matrice de caméra...). Notre shader n'en a aucune pour
-    // l'instant, d'où la liste vide.
+    // uniforms...). L'élément n°i de la liste correspond à `@group(i)` dans le
+    // shader : ici un seul groupe, celui de la caméra.
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Triangle Pipeline Layout"),
-        bind_group_layouts: &[],
+        label: Some("Mesh Pipeline Layout"),
+        bind_group_layouts: &[Some(camera_layout)],
         immediate_size: 0,
     });
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         // Les labels apparaissent dans les messages d'erreur et les outils de
         // débogage GPU (RenderDoc...). Toujours en mettre !
-        label: Some("Triangle Pipeline"),
+        label: Some("Mesh Pipeline"),
         layout: Some(&layout),
 
-        // Étape 1 : le vertex shader et le format des sommets qu'il reçoit.
+        // Étape 1 : le vertex shader et les buffers qu'il lit.
+        // Slot 0 : les sommets du maillage ; slot 1 : les matrices des instances.
+        // Ces numéros sont ceux de `render_pass.set_vertex_buffer(slot, ...)`.
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: Some("vs_main"), // nom de la fonction `@vertex` dans le .wgsl
-            buffers: &[Some(Vertex::layout())],
+            buffers: &[Some(Vertex::layout()), Some(InstanceRaw::layout())],
             compilation_options: Default::default(),
         },
 
@@ -65,8 +72,16 @@ pub(crate) fn create_triangle_pipeline(
             ..Default::default()
         },
 
-        // Pas de test de profondeur pour l'instant (nécessaire en 3D, plus tard).
-        depth_stencil: None,
+        // Le test de profondeur (voir depth.rs) : un pixel n'est dessiné que
+        // s'il est plus proche (`Less`) que ce qui est déjà dans le depth
+        // buffer, et il y écrit alors sa propre profondeur.
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
         // Pas d'anticrénelage (MSAA) : 1 échantillon par pixel.
         multisample: wgpu::MultisampleState::default(),
 

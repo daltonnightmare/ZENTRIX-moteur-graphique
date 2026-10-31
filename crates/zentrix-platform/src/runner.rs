@@ -5,14 +5,19 @@ use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
 use zentrix_core::FrameTimer;
+use zentrix_core::math::Vec2;
 
 use crate::application::{Application, WindowConfig};
+use crate::input::Input;
+
+/// Nombre de pixels de défilement (pavé tactile) comptés comme un cran de molette.
+const PIXELS_PER_SCROLL_LINE: f32 = 40.0;
 
 /// Lance l'application. **Cette fonction ne rend la main qu'à la fermeture.**
 ///
@@ -55,6 +60,7 @@ pub fn run<A: Application>(config: WindowConfig, app: A) -> anyhow::Result<()> {
         app,
         window: None,
         timer: FrameTimer::new(),
+        input: Input::default(),
         error: None,
     };
 
@@ -78,6 +84,8 @@ struct PlatformRunner<A: Application> {
     /// winit ne nous autorise à la créer que dans `resumed`.
     window: Option<Arc<Window>>,
     timer: FrameTimer,
+    /// L'état du clavier et de la souris, mis à jour à chaque événement.
+    input: Input,
     /// Première erreur fatale rencontrée, renvoyée par `run` à la fin.
     error: Option<anyhow::Error>,
 }
@@ -130,6 +138,7 @@ impl<A: Application> ApplicationHandler for PlatformRunner<A> {
         // On remet le chronomètre à zéro pour que la première image n'ait pas
         // un delta énorme (le temps d'initialisation du GPU).
         self.timer = FrameTimer::new();
+        self.input.on_focus(window.has_focus());
         window.request_redraw();
         self.window = Some(window);
     }
@@ -162,8 +171,33 @@ impl<A: Application> ApplicationHandler for PlatformRunner<A> {
                 ..
             } => {
                 let pressed = state == ElementState::Pressed;
+                self.input.on_key(key, pressed);
                 self.app.on_key(key, pressed);
             }
+
+            // Un bouton de la souris.
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.input.on_button(button, state == ElementState::Pressed);
+            }
+
+            // La molette (ou le défilement à deux doigts d'un pavé tactile).
+            WindowEvent::MouseWheel { delta, .. } => {
+                let lines = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / PIXELS_PER_SCROLL_LINE,
+                };
+                self.input.on_scroll(lines);
+            }
+
+            // Position du curseur (utile pour cliquer sur des éléments d'interface).
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input
+                    .on_cursor_moved(Some(Vec2::new(position.x as f32, position.y as f32)));
+            }
+            WindowEvent::CursorLeft { .. } => self.input.on_cursor_moved(None),
+
+            // La fenêtre gagne ou perd le focus (Alt+Tab, clic ailleurs...).
+            WindowEvent::Focused(focused) => self.input.on_focus(focused),
 
             // Le système (ou nous-mêmes) demande de redessiner la fenêtre :
             // c'est le cœur de la boucle de jeu.
@@ -172,7 +206,9 @@ impl<A: Application> ApplicationHandler for PlatformRunner<A> {
                     log::debug!("{:.0} FPS", self.timer.fps());
                 }
 
-                self.app.on_update(self.timer.delta_seconds());
+                // `&self.input` et `self.app` sont deux champs différents : Rust
+                // accepte de prêter l'un en lecture pendant qu'on modifie l'autre.
+                self.app.on_update(self.timer.delta_seconds(), &self.input);
 
                 if self.app.should_exit() {
                     log::info!("L'application a demandé la fermeture");
@@ -183,10 +219,27 @@ impl<A: Application> ApplicationHandler for PlatformRunner<A> {
                 if let Err(e) = self.app.on_render() {
                     self.fail(event_loop, e);
                 }
+
+                // Les appuis et déplacements de cette image ont été vus : on
+                // repart de zéro pour la suivante.
+                self.input.end_frame();
             }
 
             // `_` attrape tous les autres événements : on les ignore pour l'instant.
             _ => {}
+        }
+    }
+
+    /// Appelé pour les événements « bruts » des périphériques, indépendants
+    /// de la fenêtre. On n'utilise que le mouvement de la souris : contrairement
+    /// à `CursorMoved`, il continue d'arriver quand le curseur est capturé.
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+        // Ces événements arrivent même si la fenêtre n'a pas le focus : on les
+        // ignore dans ce cas, pour ne pas faire tourner la caméra en arrière-plan.
+        if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event
+            && self.input.is_focused()
+        {
+            self.input.on_mouse_motion(dx as f32, dy as f32);
         }
     }
 

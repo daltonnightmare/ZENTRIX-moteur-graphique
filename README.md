@@ -6,8 +6,9 @@ le code est commenté ligne par ligne, et un guide complet pour débutant accomp
 Il repose sur [`wgpu`](https://wgpu.rs) (une seule base de code pour Vulkan, DirectX 12, Metal et WebGPU)
 et sur [`winit`](https://docs.rs/winit) pour la fenêtre.
 
-> **État actuel : Phase 1–2 de la feuille de route.** Une fenêtre s'ouvre et affiche un triangle
-> coloré sur un fond animé, à 60 images par seconde.
+> **État actuel : Phase 2 de la feuille de route.** Une fenêtre s'ouvre et affiche une scène 3D :
+> une grille de cubes qui tournent sur un sol, vue en perspective et explorable avec une caméra libre
+> (clavier + souris), avec test de profondeur et rendu instancié.
 
 ---
 
@@ -19,10 +20,15 @@ et sur [`winit`](https://docs.rs/winit) pour la fenêtre.
 cargo run
 ```
 
-| Touche  | Action                          |
-|---------|---------------------------------|
-| `Échap` | Quitter                         |
-| `Espace`| Mettre en pause l'animation du fond |
+| Touche (AZERTY)       | Action                                          |
+|-----------------------|-------------------------------------------------|
+| clic gauche           | Capturer la souris pour regarder autour de soi  |
+| `Z` `Q` `S` `D`       | Se déplacer (WASD sur un clavier QWERTY)        |
+| `Espace` / `Ctrl`     | Monter / descendre                              |
+| `Maj` (maintenue)     | Aller 3 fois plus vite                          |
+| molette               | Régler la vitesse de déplacement                |
+| `P`                   | Mettre en pause l'animation des cubes           |
+| `Échap`               | Libérer la souris, puis quitter                 |
 
 La première compilation prend quelques minutes (wgpu est une grosse dépendance). Les suivantes ne prennent que quelques secondes.
 
@@ -55,10 +61,10 @@ Le projet est un **workspace Cargo** : plusieurs petites crates, chacune avec un
 
 | Crate | Rôle | Fichiers clés |
 |-------|------|---------------|
-| [`zentrix-core`](crates/zentrix-core) | Couleurs, chronomètre de frame. Aucune dépendance. | `color.rs`, `time.rs` |
-| [`zentrix-platform`](crates/zentrix-platform) | Fenêtre et boucle d'événements. Définit le trait `Application`. | `application.rs`, `runner.rs` |
+| [`zentrix-core`](crates/zentrix-core) | Couleurs, chronomètre de frame, maths 3D (`glam`), `Transform`. | `color.rs`, `time.rs`, `math.rs`, `transform.rs` |
+| [`zentrix-platform`](crates/zentrix-platform) | Fenêtre, boucle d'événements, état du clavier et de la souris (`Input`). Définit le trait `Application`. | `application.rs`, `runner.rs`, `input.rs` |
 | [`zentrix-rhi`](crates/zentrix-rhi) | Connexion au GPU : instance, adapter, device, queue, surface. | `context.rs`, `error.rs` |
-| [`zentrix-render`](crates/zentrix-render) | Pipelines, shaders, vertex buffers, passes de rendu. | `renderer.rs`, `pipeline.rs`, `shaders/triangle.wgsl` |
+| [`zentrix-render`](crates/zentrix-render) | Maillages, caméra, depth buffer, pipelines, shaders, passes de rendu. | `renderer.rs`, `mesh.rs`, `camera.rs`, `pipeline.rs`, `shaders/mesh.wgsl` |
 | [`zentrix-app`](crates/zentrix-app) | Point d'entrée `main()` et démo. | `main.rs` |
 
 ```text
@@ -80,6 +86,8 @@ ZENTRIX-moteur-graphique/
 ## Documentation
 
 👉 **Commencez par [documentation/README.md](documentation/README.md).**
+
+📓 L'historique daté des changements est dans le [journal de travail](journal-de-travail/README.md).
 
 Le [guide du débutant](documentation/guide-debutant/) explique, dans l'ordre :
 

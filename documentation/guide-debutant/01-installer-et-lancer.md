@@ -71,10 +71,21 @@ Ce qui se passe :
 
 La **première compilation est longue** (plusieurs minutes) : `wgpu` et ses dépendances représentent des centaines de milliers de lignes. Les compilations suivantes ne recompilent que ce qui a changé.
 
-Vous devez voir une fenêtre avec un **triangle rouge/vert/bleu** sur un fond qui oscille doucement entre bleu nuit et violet.
+Vous devez voir une fenêtre avec une **grille de cubes colorés** qui tournent sur un sol. Cliquez
+dans la fenêtre pour piloter la caméra :
 
-- `Espace` : met l'animation du fond en pause.
-- `Échap` : quitte.
+| Touche (AZERTY)       | Action                                          |
+|-----------------------|-------------------------------------------------|
+| clic gauche           | Capturer la souris pour regarder autour de soi  |
+| `Z` `Q` `S` `D`       | Se déplacer (WASD sur un clavier QWERTY)        |
+| `Espace` / `Ctrl`     | Monter / descendre                              |
+| `Maj` (maintenue)     | Aller 3 fois plus vite                          |
+| molette               | Régler la vitesse de déplacement                |
+| `P`                   | Mettre en pause l'animation des cubes           |
+| `Échap`               | Libérer la souris, puis quitter                 |
+
+> Les captures de ce guide montrent parfois l'ancienne démo (un triangle sur fond animé) :
+> l'historique des changements est dans le [journal de travail](../../journal-de-travail/README.md).
 
 ---
 

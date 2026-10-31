@@ -12,7 +12,7 @@ Ce chapitre relie la base actuelle aux documents de conception : [GAME_ENGINE_DE
 |------------------------------------------------|------|
 | **Phase 0** — Vision, périmètre | ✅ Rust + wgpu, bureau d'abord, workspace multi-crates |
 | **Phase 1** — Fondation et boucle d'exécution | ✅ fenêtre, événements, delta time, FPS, logs, arrêt propre · ⏳ fichier de configuration |
-| **Phase 2** — Noyau de rendu | 🟡 **en cours** : GPU + surface + pipeline + vertex buffer ✅ · index buffer, caméra, textures, debug ⏳ |
+| **Phase 2** — Noyau de rendu | 🟡 **en cours** : GPU + surface + pipeline ✅ · maillages, uniforms, caméra 3D, depth buffer, instanciation ✅ · entrées + caméra libre ✅ · textures, debug ⏳ |
 | Phase 3+ — ECS, assets, entrées... | ⏳ à venir |
 
 ---
@@ -21,7 +21,16 @@ Ce chapitre relie la base actuelle aux documents de conception : [GAME_ENGINE_DE
 
 Chaque étape produit quelque chose de **visible**, ce qui permet de valider qu'elle fonctionne. C'est le principe « valider chaque phase avec une démo fonctionnelle ».
 
-### Étape A — Maillages (`Mesh`) ⭐⭐
+> ✅ **Étapes A à D réalisées** (voir `mesh.rs`, `camera.rs`, `depth.rs`, `renderer.rs` dans
+> `zentrix-render`, et `transform.rs` dans `zentrix-core`). Les exercices 4 et 7 restent
+> intéressants à refaire de votre côté : comparez ensuite votre solution au code du moteur.
+>
+> Choix réalisés au passage : les objets sont décrits par des `DrawCommand { mesh, transform }`
+> que l'application fournit à chaque image ; le `Renderer` les trie par maillage et dessine
+> chaque groupe en **un seul** appel instancié (`draw_indexed(.., 0..N)`). La matrice de chaque
+> instance passe par un *instance buffer* (`InstanceRaw`), la caméra par un *uniform buffer*.
+
+### Étape A — Maillages (`Mesh`) ⭐⭐ ✅
 
 - Faire l'[exercice 4](06-exercices.md#exercice-4--un-carré-avec-un-index-buffer) (index buffer).
 - Créer `crates/zentrix-render/src/mesh.rs` avec une struct `Mesh` (vertex buffer + index buffer + nombre d'indices).
@@ -29,14 +38,14 @@ Chaque étape produit quelque chose de **visible**, ce qui permet de valider qu'
 
 **Démo** : un triangle et un carré côte à côte.
 
-### Étape B — Uniforms et temps ⭐⭐⭐
+### Étape B — Uniforms et temps ⭐⭐⭐ ✅
 
 - Faire l'[exercice 7](06-exercices.md#exercice-7--faire-tourner-le-triangle-uniform-buffer).
 - Généraliser : une struct `Globals` envoyée une fois par image (temps, taille d'écran).
 
 **Démo** : le triangle tourne.
 
-### Étape C — Caméra 3D ⭐⭐⭐
+### Étape C — Caméra 3D ⭐⭐⭐ ✅
 
 - Ajouter `glam` à `zentrix-render` (déjà déclaré dans le catalogue du workspace).
 - Créer `camera.rs` : position, cible, champ de vision → matrice `view_projection` (voir l'exemple de [moteurGraphique.md §1.7](../moteurGraphique.md)).
@@ -45,21 +54,26 @@ Chaque étape produit quelque chose de **visible**, ce qui permet de valider qu'
 
 **Démo** : un cube 3D, vu en perspective.
 
-### Étape D — Profondeur (depth buffer) ⭐⭐
+### Étape D — Profondeur (depth buffer) ⭐⭐ ✅
 
 - Créer une texture de profondeur (`Depth32Float`), à recréer à chaque redimensionnement.
 - Activer `depth_stencil` dans le pipeline.
 
 **Démo** : plusieurs cubes qui se cachent correctement les uns les autres.
 
-### Étape E — Entrées et caméra libre ⭐⭐
+### Étape E — Entrées et caméra libre ⭐⭐ ✅
+
+> ✅ Réalisée : `Input` dans [input.rs](../../crates/zentrix-platform/src/input.rs) (transmis à
+> `on_update`), caméra libre `FlyCamera` dans [fly_camera.rs](../../crates/zentrix-app/src/fly_camera.rs).
+> Les contrôles utilisent des **touches physiques** : `KeyCode::KeyW` est « Z » en AZERTY.
+
 
 - Dans `zentrix-platform`, créer une struct `Input` qui mémorise les touches enfoncées et le mouvement de la souris (voir Phase 5).
 - Déplacer la caméra avec `ZQSD` + souris, en multipliant par `dt`.
 
 **Démo** : se promener dans une scène de cubes.
 
-### Étape F — Textures ⭐⭐⭐
+### Étape F — Textures ⭐⭐⭐ ← prochaine étape
 
 - Créer la crate **`zentrix-assets`** (voir [chapitre 3 §3.6](03-cargo-et-workspace.md#36-ajouter-une-nouvelle-crate-au-moteur)) qui charge les images avec la crate `image`.
 - Côté rendu : texture GPU + *sampler* + coordonnées UV dans `Vertex` + bind group.

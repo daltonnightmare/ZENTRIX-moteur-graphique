@@ -17,7 +17,9 @@
 // dans le fichier `color.rs` à côté de moi ». Sans cette ligne, le fichier
 // serait tout simplement ignoré par le compilateur !
 mod color;
+pub mod math;
 mod time;
+mod transform;
 
 // `pub use` ré-exporte des éléments : l'utilisateur peut écrire
 // `zentrix_core::Color` au lieu de `zentrix_core::color::Color`.
@@ -25,3 +27,4 @@ mod time;
 // précisément ce qui fait partie de l'API publique.
 pub use color::Color;
 pub use time::FrameTimer;
+pub use transform::Transform;

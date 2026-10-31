@@ -408,7 +408,7 @@ Un **trait** décrit un **comportement** : une liste de méthodes qu'un type s'e
 pub trait Application {
     fn on_start(&mut self, window: Arc<Window>) -> anyhow::Result<()>; // obligatoire
     fn on_render(&mut self) -> anyhow::Result<()>;                      // obligatoire
-    fn on_update(&mut self, _dt: f32) {}        // facultatif : corps par défaut vide
+    fn on_update(&mut self, _dt: f32, _input: &Input) {} // facultatif : corps par défaut vide
     fn should_exit(&self) -> bool { false }     // facultatif
 }
 ```

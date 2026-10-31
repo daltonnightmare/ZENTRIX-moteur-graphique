@@ -6,5 +6,9 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
-# Volontairement AUCUNE dépendance : le noyau doit rester léger et testable seul.
+# Une seule dépendance : `glam`, la bibliothèque de maths 3D (vecteurs,
+# matrices, quaternions). Le noyau reste léger, sans GPU ni fenêtre, et
+# testable seul. On la ré-exporte (`zentrix_core::math`) pour que toutes les
+# crates partagent exactement les mêmes types mathématiques.
 [dependencies]
+glam = { workspace = true }

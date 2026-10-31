@@ -16,7 +16,22 @@
 //! Logs détaillés : `RUST_LOG=debug cargo run` (bash) ou
 //! `$env:RUST_LOG="debug"; cargo run` (PowerShell).
 //!
-//! Commandes : `Échap` pour quitter, `Espace` pour mettre en pause l'animation du fond.
+//! La démo : une grille de cubes qui tournent sur un sol, explorée avec une
+//! caméra libre.
+//!
+//! Commandes (touches données pour un clavier AZERTY) :
+//!
+//! | Touche              | Action                                        |
+//! |---------------------|-----------------------------------------------|
+//! | clic gauche         | capturer la souris (regarder autour de soi)   |
+//! | `Z` `Q` `S` `D`     | avancer, aller à gauche, reculer, aller à droite |
+//! | `Espace` / `Ctrl`   | monter / descendre                            |
+//! | `Maj` (maintenue)   | aller 3 fois plus vite                        |
+//! | molette             | régler la vitesse                             |
+//! | `P`                 | mettre en pause l'animation des cubes         |
+//! | `Échap`             | libérer la souris, puis quitter               |
+
+mod fly_camera;
 
 use std::sync::Arc;
 
@@ -24,10 +39,20 @@ use std::sync::Arc;
 // elle enrichit le message d'erreur pour savoir OÙ l'erreur s'est produite.
 use anyhow::Context;
 
-use zentrix_core::Color;
-use zentrix_platform::{Application, KeyCode, Window, WindowConfig};
-use zentrix_render::Renderer;
+use zentrix_core::math::{Quat, Vec3};
+use zentrix_core::{Color, Transform};
+use zentrix_platform::{
+    Application, Input, KeyCode, MouseButton, Window, WindowConfig, set_cursor_captured,
+};
+use zentrix_render::{Camera, DrawCommand, MeshData, MeshHandle, Renderer};
 use zentrix_rhi::GpuContext;
+
+use crate::fly_camera::FlyCamera;
+
+/// Nombre de cubes par côté de la grille (la scène en contient le carré).
+const GRID_SIZE: i32 = 5;
+/// Distance entre deux cubes voisins.
+const GRID_SPACING: f32 = 1.8;
 
 /// Les objets qui n'existent qu'une fois la fenêtre créée.
 ///
@@ -37,6 +62,8 @@ struct GraphicsState {
     window: Arc<Window>,
     gpu: GpuContext,
     renderer: Renderer,
+    cube: MeshHandle,
+    ground: MeshHandle,
 }
 
 /// L'état de notre application de démonstration.
@@ -45,6 +72,14 @@ struct ZentrixApp {
     graphics: Option<GraphicsState>,
     /// Temps d'animation accumulé (en secondes).
     time: f32,
+    /// La caméra de rendu, et le contrôleur qui la pilote.
+    camera: Camera,
+    fly_camera: FlyCamera,
+    /// La souris est-elle capturée par la fenêtre (mode « regard ») ?
+    mouse_captured: bool,
+    /// Les commandes de dessin de l'image en cours. Gardé d'une image à
+    /// l'autre pour réutiliser sa mémoire.
+    draws: Vec<DrawCommand>,
     /// L'animation est-elle en pause ?
     paused: bool,
     /// Demande de fermeture (touche Échap).
@@ -56,8 +91,49 @@ impl ZentrixApp {
         Self {
             graphics: None,
             time: 0.0,
+            camera: Camera::default(),
+            fly_camera: FlyCamera::looking_at(Vec3::new(0.0, 4.0, 11.0), Vec3::new(0.0, 0.5, 0.0)),
+            mouse_captured: false,
+            draws: Vec::new(),
             paused: false,
             quit_requested: false,
+        }
+    }
+
+    /// Capture ou libère la souris, et retient le résultat.
+    fn set_mouse_captured(&mut self, captured: bool) {
+        if let Some(g) = &self.graphics {
+            self.mouse_captured = set_cursor_captured(&g.window, captured);
+        }
+    }
+
+    /// Les commandes « ponctuelles » : elles réagissent à l'image où la
+    /// touche est enfoncée (`was_key_pressed`), pas tant qu'elle est maintenue.
+    fn handle_commands(&mut self, input: &Input) {
+        if input.was_key_pressed(KeyCode::KeyP) {
+            self.paused = !self.paused;
+            log::info!(
+                "Animation {}",
+                if self.paused { "en pause" } else { "reprise" }
+            );
+        }
+
+        // Échap libère d'abord la souris ; un second appui quitte.
+        if input.was_key_pressed(KeyCode::Escape) {
+            if self.mouse_captured {
+                self.set_mouse_captured(false);
+            } else {
+                self.quit_requested = true;
+            }
+        }
+
+        if input.was_button_pressed(MouseButton::Left) && !self.mouse_captured {
+            self.set_mouse_captured(true);
+        }
+
+        // Alt+Tab pendant la capture : on rend la souris au système.
+        if !input.is_focused() && self.mouse_captured {
+            self.set_mouse_captured(false);
         }
     }
 }
@@ -71,15 +147,28 @@ impl Application for ZentrixApp {
         let gpu = pollster::block_on(GpuContext::new(Arc::clone(&window)))
             .context("échec de l'initialisation du GPU")?;
 
-        let renderer = Renderer::new(&gpu);
+        let mut renderer = Renderer::new(&gpu);
+        renderer.clear_color = Color::ZENTRIX_NIGHT;
+        // Chaque maillage n'est envoyé qu'UNE fois au GPU, puis réutilisé par
+        // toutes ses instances grâce à son handle.
+        let cube = renderer.add_mesh(&gpu, &MeshData::cube());
+        let ground = renderer.add_mesh(&gpu, &MeshData::plane([0.12, 0.12, 0.18]));
 
         let info = gpu.adapter_info();
-        window.set_title(&format!("ZENTRIX — {} ({:?})", info.name, info.backend));
+        window.set_title(&format!(
+            "ZENTRIX — {} ({:?}) — clic : piloter, Échap : libérer",
+            info.name, info.backend
+        ));
+        log::info!(
+            "Commandes : clic gauche = capturer la souris, ZQSD = se déplacer,              Espace/Ctrl = monter/descendre, Maj = vite, molette = vitesse, P = pause, Échap = libérer/quitter"
+        );
 
         self.graphics = Some(GraphicsState {
             window,
             gpu,
             renderer,
+            cube,
+            ground,
         });
         Ok(())
     }
@@ -92,35 +181,51 @@ impl Application for ZentrixApp {
         }
     }
 
-    fn on_key(&mut self, key: KeyCode, pressed: bool) {
-        // On ne réagit qu'à l'appui, pas au relâchement.
-        if !pressed {
-            return;
-        }
-        match key {
-            KeyCode::Escape => self.quit_requested = true,
-            KeyCode::Space => {
-                self.paused = !self.paused;
-                log::info!(
-                    "Animation {}",
-                    if self.paused { "en pause" } else { "reprise" }
-                );
-            }
-            _ => {}
-        }
-    }
+    fn on_update(&mut self, dt: f32, input: &Input) {
+        self.handle_commands(input);
 
-    fn on_update(&mut self, dt: f32) {
         if !self.paused {
             // Grâce au delta time, l'animation a la même vitesse sur toutes les machines.
             self.time += dt;
         }
 
-        if let Some(g) = &mut self.graphics {
-            // Le fond oscille doucement entre deux couleurs.
-            // `sin` varie entre -1 et 1 ; `* 0.5 + 0.5` le ramène entre 0 et 1.
-            let t = (self.time * 0.8).sin() * 0.5 + 0.5;
-            g.renderer.clear_color = Color::ZENTRIX_NIGHT.lerp(Color::rgb(0.15, 0.05, 0.25), t);
+        // La souris ne fait tourner la vue que si elle est capturée.
+        self.fly_camera.update(input, dt, self.mouse_captured);
+        self.fly_camera.apply_to(&mut self.camera);
+
+        // On reconstruit la liste des objets à dessiner. Plus tard, c'est
+        // l'ECS (zentrix-scene) qui produira cette liste à partir des entités.
+        let Some(g) = &self.graphics else { return };
+        self.draws.clear();
+
+        // Le sol : un plan de 1×1 agrandi 16 fois, juste sous les cubes.
+        self.draws.push(DrawCommand {
+            mesh: g.ground,
+            transform: Transform::from_translation(Vec3::new(0.0, -0.5, 0.0))
+                .with_uniform_scale(16.0)
+                .matrix(),
+        });
+
+        // Une grille de cubes centrée sur l'origine. `half` décale la grille
+        // pour que son centre soit en (0, 0) plutôt que son coin.
+        let half = (GRID_SIZE - 1) as f32 * GRID_SPACING / 2.0;
+        for x in 0..GRID_SIZE {
+            for z in 0..GRID_SIZE {
+                let position = Vec3::new(
+                    x as f32 * GRID_SPACING - half,
+                    0.3,
+                    z as f32 * GRID_SPACING - half,
+                );
+                // Chaque cube tourne à sa propre vitesse, autour d'un axe incliné.
+                let speed = 0.5 + 0.15 * (x + z) as f32;
+                let axis = Vec3::new(1.0, 1.0, 0.3).normalize();
+                self.draws.push(DrawCommand {
+                    mesh: g.cube,
+                    transform: Transform::from_translation(position)
+                        .with_rotation(Quat::from_axis_angle(axis, self.time * speed))
+                        .matrix(),
+                });
+            }
         }
     }
 
@@ -130,7 +235,7 @@ impl Application for ZentrixApp {
 
     fn on_render(&mut self) -> anyhow::Result<()> {
         if let Some(g) = &mut self.graphics {
-            g.renderer.render(&mut g.gpu)?;
+            g.renderer.render(&mut g.gpu, &self.camera, &self.draws)?;
             // `pre_present_notify` n'est pas obligatoire, mais aide winit à
             // mieux planifier les images sur certaines plateformes (Wayland).
             g.window.pre_present_notify();

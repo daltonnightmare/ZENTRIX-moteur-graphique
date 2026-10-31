@@ -1,8 +1,17 @@
 //! # zentrix-render
 //!
-//! Le rendu **haut niveau** : il sait *quoi* dessiner (des triangles, des
-//! couleurs, bientôt des maillages, des caméras et des lumières) et s'appuie
-//! sur `zentrix-rhi` pour *parler* au GPU.
+//! Le rendu **haut niveau** : il sait *quoi* dessiner (des maillages vus par
+//! une caméra, bientôt des textures et des lumières) et s'appuie sur
+//! `zentrix-rhi` pour *parler* au GPU.
+//!
+//! ## Utilisation
+//!
+//! ```text
+//!  au démarrage :  let cube = renderer.add_mesh(&gpu, &MeshData::cube());
+//!  chaque image :  renderer.render(&mut gpu, &camera, &[
+//!                      DrawCommand { mesh: cube, transform: t.matrix() },
+//!                  ])?;
+//! ```
 //!
 //! ## Le trajet d'une image
 //!
@@ -10,12 +19,15 @@
 //!  Renderer::render()
 //!    │
 //!    ├─ 1. gpu.acquire_frame()        → on obtient une image vierge de la fenêtre
+//!    ├─    queue.write_buffer(...)    → on envoie la caméra et les matrices des objets
 //!    ├─ 2. device.create_command_encoder()
 //!    │                                 → un « carnet » où l'on note les commandes
-//!    ├─ 3. encoder.begin_render_pass()  → on efface l'image (clear color)
+//!    ├─ 3. encoder.begin_render_pass()  → on efface l'image et le depth buffer
 //!    │      ├─ set_pipeline(...)        → « voici comment dessiner »
-//!    │      ├─ set_vertex_buffer(...)   → « voici les sommets »
-//!    │      └─ draw(0..3, 0..1)         → « dessine 3 sommets, 1 fois »
+//!    │      ├─ set_bind_group(0, ...)   → « voici la caméra »
+//!    │      └─ pour chaque maillage :
+//!    │           ├─ set_vertex_buffer / set_index_buffer → « voici la géométrie »
+//!    │           └─ draw_indexed(.., instances)          → « dessine-la N fois »
 //!    ├─ 4. queue.submit(encoder.finish())
 //!    │                                 → on envoie le carnet au GPU
 //!    └─ 5. frame.present()              → l'image apparaît à l'écran
@@ -24,9 +36,14 @@
 //! Important : les étapes 2 et 3 n'exécutent **rien** sur le GPU. Elles
 //! *enregistrent* des commandes. Le GPU ne travaille qu'au `submit`.
 
+mod camera;
+mod depth;
+mod mesh;
 mod pipeline;
 mod renderer;
 mod vertex;
 
-pub use renderer::Renderer;
-pub use vertex::Vertex;
+pub use camera::Camera;
+pub use mesh::{MeshData, MeshHandle};
+pub use renderer::{DrawCommand, Renderer};
+pub use vertex::{InstanceRaw, Vertex};
