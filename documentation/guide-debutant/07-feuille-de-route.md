@@ -12,7 +12,7 @@ Ce chapitre relie la base actuelle aux documents de conception : [GAME_ENGINE_DE
 |------------------------------------------------|------|
 | **Phase 0** — Vision, périmètre | ✅ Rust + wgpu, bureau d'abord, workspace multi-crates |
 | **Phase 1** — Fondation et boucle d'exécution | ✅ fenêtre, événements, delta time, FPS, logs, arrêt propre · ⏳ fichier de configuration |
-| **Phase 2** — Noyau de rendu | 🟡 **en cours** : GPU + surface + pipeline ✅ · maillages, uniforms, caméra 3D, depth buffer, instanciation ✅ · entrées + caméra libre ✅ · textures, debug ⏳ |
+| **Phase 2** — Noyau de rendu | 🟡 **en cours** : GPU + surface + pipeline ✅ · maillages, uniforms, caméra 3D, depth buffer, instanciation ✅ · entrées + caméra libre ✅ · textures ✅ · debug ⏳ |
 | Phase 3+ — ECS, assets, entrées... | ⏳ à venir |
 
 ---
@@ -73,14 +73,20 @@ Chaque étape produit quelque chose de **visible**, ce qui permet de valider qu'
 
 **Démo** : se promener dans une scène de cubes.
 
-### Étape F — Textures ⭐⭐⭐ ← prochaine étape
+### Étape F — Textures ⭐⭐⭐ ✅
+
+> ✅ Réalisée : `Image` dans [image.rs](../../crates/zentrix-core/src/image.rs) (avec mipmaps),
+> crate [zentrix-assets](../../crates/zentrix-assets/src/lib.rs) (PNG/JPEG via `image`),
+> [texture.rs](../../crates/zentrix-render/src/texture.rs) côté GPU. `zentrix-render` ne dépend
+> **pas** de `zentrix-assets` : les deux partagent seulement le type `Image` du noyau.
+
 
 - Créer la crate **`zentrix-assets`** (voir [chapitre 3 §3.6](03-cargo-et-workspace.md#36-ajouter-une-nouvelle-crate-au-moteur)) qui charge les images avec la crate `image`.
 - Côté rendu : texture GPU + *sampler* + coordonnées UV dans `Vertex` + bind group.
 
 **Démo** : un cube texturé.
 
-### Étape G — Rendu de debug ⭐⭐
+### Étape G — Rendu de debug ⭐⭐ ← prochaine étape
 
 - Une passe qui dessine des lignes (`PrimitiveTopology::LineList`) : grille au sol, axes X/Y/Z.
 - API : `renderer.debug_line(debut, fin, couleur)` (voir [moteurGraphique.md §2.6](../moteurGraphique.md)).

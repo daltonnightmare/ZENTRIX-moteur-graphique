@@ -1,7 +1,7 @@
 //! Le [`Renderer`] : point d'entrée du rendu pour l'application.
 
-use zentrix_core::Color;
 use zentrix_core::math::Mat4;
+use zentrix_core::{Color, Image};
 use zentrix_rhi::wgpu::util::DeviceExt; // apporte la méthode `create_buffer_init`
 use zentrix_rhi::{GpuContext, RhiError, wgpu};
 
@@ -9,9 +9,19 @@ use crate::camera::Camera;
 use crate::depth::DepthTexture;
 use crate::mesh::{Mesh, MeshData, MeshHandle};
 use crate::pipeline::create_mesh_pipeline;
+use crate::texture::{self, Texture, TextureHandle};
 use crate::vertex::InstanceRaw;
 
-/// « Dessine ce maillage, à cet endroit. »
+/// La texture utilisée quand une commande n'en précise pas : 1 pixel blanc,
+/// qui laisse voir la couleur des sommets telle quelle (blanc × couleur = couleur).
+/// Elle est créée en premier, elle a donc toujours le numéro 0.
+const WHITE_TEXTURE: TextureHandle = TextureHandle(0);
+
+/// Ce qui oblige à changer d'état entre deux appels de dessin : la texture et
+/// le maillage. Les instances de même clé sont dessinées en un seul appel.
+type BatchKey = (TextureHandle, MeshHandle);
+
+/// « Dessine ce maillage, avec cette texture, à cet endroit. »
 ///
 /// C'est **tout** ce que le rendu sait de la scène. Le jeu (ou plus tard
 /// l'ECS) construit une liste de `DrawCommand` à chaque image et la donne à
@@ -19,6 +29,9 @@ use crate::vertex::InstanceRaw;
 #[derive(Debug, Clone, Copy)]
 pub struct DrawCommand {
     pub mesh: MeshHandle,
+    /// La texture plaquée sur le maillage (multipliée par la couleur des
+    /// sommets). `None` : pas de texture, seule la couleur des sommets compte.
+    pub texture: Option<TextureHandle>,
     /// La matrice modèle, généralement obtenue avec `Transform::matrix()`.
     pub transform: Mat4,
 }
@@ -54,6 +67,11 @@ pub struct Renderer {
     /// Tous les maillages chargés. Un `MeshHandle` est un indice dans ce `Vec`.
     meshes: Vec<Mesh>,
 
+    /// Toutes les textures chargées (la n°0 est la texture blanche).
+    textures: Vec<Texture>,
+    texture_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
 
@@ -64,7 +82,7 @@ pub struct Renderer {
     /// Tableaux de travail réutilisés d'une image à l'autre : `clear()` vide
     /// un `Vec` sans libérer sa mémoire, on évite donc une allocation par image.
     /// `instances` sert au tri, `instance_data` au format attendu par le GPU.
-    instances: Vec<(MeshHandle, InstanceRaw)>,
+    instances: Vec<(BatchKey, InstanceRaw)>,
     instance_data: Vec<InstanceRaw>,
 
     depth: DepthTexture,
@@ -113,14 +131,24 @@ impl Renderer {
             }],
         });
 
-        let pipeline = create_mesh_pipeline(device, gpu.surface_format(), &camera_layout);
+        // --- Les textures : un layout et un sampler communs à toutes ----------
+        let texture_layout = texture::create_bind_group_layout(device);
+        let sampler = texture::create_sampler(device);
 
-        log::info!("Renderer initialisé");
+        let pipeline = create_mesh_pipeline(
+            device,
+            gpu.surface_format(),
+            &camera_layout,
+            &texture_layout,
+        );
 
-        Self {
+        let mut renderer = Self {
             clear_color: Color::default(),
             pipeline,
             meshes: Vec::new(),
+            textures: Vec::new(),
+            texture_layout,
+            sampler,
             camera_buffer,
             camera_bind_group,
             instance_buffer: create_instance_buffer(device, INITIAL_INSTANCE_CAPACITY),
@@ -128,13 +156,34 @@ impl Renderer {
             instances: Vec::new(),
             instance_data: Vec::new(),
             depth: DepthTexture::new(device, gpu.size()),
-        }
+        };
+
+        let white = renderer.add_texture(gpu, &Image::solid(1, 1, Color::WHITE));
+        debug_assert_eq!(white, WHITE_TEXTURE);
+
+        log::info!("Renderer initialisé");
+        renderer
     }
 
     /// Envoie un maillage sur le GPU et renvoie le handle qui permet de le dessiner.
     pub fn add_mesh(&mut self, gpu: &GpuContext, data: &MeshData) -> MeshHandle {
         self.meshes.push(Mesh::upload(gpu.device(), data));
         MeshHandle(self.meshes.len() - 1)
+    }
+
+    /// Envoie une image sur le GPU (avec ses mipmaps) et renvoie le handle
+    /// qui permet de la plaquer sur des maillages.
+    pub fn add_texture(&mut self, gpu: &GpuContext, image: &Image) -> TextureHandle {
+        let label = format!("Texture #{}", self.textures.len());
+        self.textures.push(Texture::upload(
+            gpu.device(),
+            gpu.queue(),
+            &self.texture_layout,
+            &self.sampler,
+            image,
+            &label,
+        ));
+        TextureHandle(self.textures.len() - 1)
     }
 
     /// Dessine une image complète, vue par `camera`, et l'affiche.
@@ -224,12 +273,19 @@ impl Renderer {
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
-            // `self.instances` est trié par maillage : les instances d'un même
-            // maillage se suivent. `chunk_by` découpe le tableau en groupes
-            // consécutifs de même maillage, et chaque groupe = UN appel de dessin.
+            // `self.instances` est trié par (texture, maillage) : les instances
+            // identiques se suivent. `chunk_by` découpe le tableau en groupes
+            // consécutifs de même clé, et chaque groupe = UN appel de dessin.
+            // Trier d'abord par texture minimise les changements de bind group.
             let mut first = 0u32;
+            let mut bound_texture = None;
             for group in self.instances.chunk_by(|a, b| a.0 == b.0) {
-                let mesh = &self.meshes[group[0].0.0];
+                let (texture, mesh) = group[0].0;
+                if bound_texture != Some(texture) {
+                    render_pass.set_bind_group(1, &self.textures[texture.0].bind_group, &[]);
+                    bound_texture = Some(texture);
+                }
+                let mesh = &self.meshes[mesh.0];
                 let count = group.len() as u32;
                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 render_pass
@@ -249,19 +305,19 @@ impl Renderer {
         Ok(())
     }
 
-    /// Trie les commandes par maillage et copie leurs matrices dans
+    /// Trie les commandes par (texture, maillage) et copie leurs matrices dans
     /// `instance_buffer`, en l'agrandissant si nécessaire.
     fn upload_instances(&mut self, gpu: &GpuContext, draws: &[DrawCommand]) {
         self.instances.clear();
-        self.instances.extend(
-            draws
-                .iter()
-                .map(|d| (d.mesh, InstanceRaw::from(d.transform))),
-        );
-        // `sort_by_key` est stable : l'ordre des commandes d'un même maillage
-        // est conservé. (Le test de profondeur rend l'ordre sans importance
-        // pour des objets opaques, mais ce sera utile pour la transparence.)
-        self.instances.sort_by_key(|(mesh, _)| *mesh);
+        self.instances.extend(draws.iter().map(|d| {
+            let texture = d.texture.unwrap_or(WHITE_TEXTURE);
+            ((texture, d.mesh), InstanceRaw::from(d.transform))
+        }));
+        // `sort_by_key` est stable : l'ordre des commandes de même clé est
+        // conservé. (Le test de profondeur rend l'ordre sans importance pour
+        // des objets opaques, mais ce sera utile pour la transparence.)
+        // Les tuples se comparent élément par élément : texture, puis maillage.
+        self.instances.sort_by_key(|(key, _)| *key);
 
         if self.instances.len() > self.instance_capacity {
             // On double (au minimum) la capacité pour ne pas recréer le buffer

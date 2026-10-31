@@ -24,6 +24,7 @@ pub(crate) fn create_mesh_pipeline(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
     camera_layout: &wgpu::BindGroupLayout,
+    texture_layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     // `include_str!` lit le fichier À LA COMPILATION et l'insère dans le
     // programme sous forme de texte : pas besoin de livrer le .wgsl à côté
@@ -36,10 +37,11 @@ pub(crate) fn create_mesh_pipeline(
 
     // Le « layout » décrit les ressources externes du shader (textures,
     // uniforms...). L'élément n°i de la liste correspond à `@group(i)` dans le
-    // shader : ici un seul groupe, celui de la caméra.
+    // shader : le groupe 0 pour la caméra (change une fois par image), le
+    // groupe 1 pour la texture (change entre deux objets).
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Mesh Pipeline Layout"),
-        bind_group_layouts: &[Some(camera_layout)],
+        bind_group_layouts: &[Some(camera_layout), Some(texture_layout)],
         immediate_size: 0,
     });
 

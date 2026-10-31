@@ -1,5 +1,5 @@
 // =============================================================================
-//  mesh.wgsl — dessine des maillages 3D colorés, vus par une caméra
+//  mesh.wgsl — dessine des maillages 3D colorés et texturés, vus par une caméra
 // =============================================================================
 //
 // Un SHADER est un petit programme exécuté par le GPU, des milliers de fois
@@ -36,20 +36,28 @@ struct CameraUniform {
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
+// La texture de l'objet et son sampler (bind group n°1, voir texture.rs).
+// Le sampler décide COMMENT lire la texture : filtrage, répétition, mipmaps.
+@group(1) @binding(0)
+var color_texture: texture_2d<f32>;
+@group(1) @binding(1)
+var color_sampler: sampler;
+
 // Données d'ENTRÉE par sommet. Les `@location(n)` correspondent EXACTEMENT
 // à `Vertex::ATTRIBUTES` côté Rust (crates/zentrix-render/src/vertex.rs).
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec3<f32>,
+    @location(2) uv: vec2<f32>,
 };
 
 // Données d'ENTRÉE par instance : les 4 colonnes de la matrice modèle
 // (`InstanceRaw::ATTRIBUTES`).
 struct InstanceInput {
-    @location(2) model_0: vec4<f32>,
-    @location(3) model_1: vec4<f32>,
-    @location(4) model_2: vec4<f32>,
-    @location(5) model_3: vec4<f32>,
+    @location(3) model_0: vec4<f32>,
+    @location(4) model_1: vec4<f32>,
+    @location(5) model_2: vec4<f32>,
+    @location(6) model_3: vec4<f32>,
 };
 
 // Données transmises du vertex shader au fragment shader.
@@ -61,6 +69,9 @@ struct VertexOutput {
     // Une valeur libre : la couleur. Le GPU l'INTERPOLE automatiquement entre les
     // 3 sommets du triangle.
     @location(0) color: vec3<f32>,
+    // Les UV sont interpolées de la même façon : chaque pixel du triangle
+    // sait ainsi quel point de la texture lui correspond.
+    @location(1) uv: vec2<f32>,
 };
 
 @vertex
@@ -79,6 +90,7 @@ fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = camera.view_proj * world_position;
     out.color = vertex.color;
+    out.uv = vertex.uv;
     return out;
 }
 
@@ -86,5 +98,10 @@ fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
 // (l'image de la fenêtre, voir `targets` dans pipeline.rs).
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0); // alpha = 1 : opaque
+    // `textureSample` lit la texture au point `uv`, en appliquant le filtrage
+    // et en choisissant le bon niveau de mipmap selon la distance.
+    let texel = textureSample(color_texture, color_sampler, in.uv);
+    // La couleur du sommet TEINTE la texture (multiplication composante par
+    // composante). Avec la texture blanche par défaut, on retrouve la couleur seule.
+    return vec4<f32>(texel.rgb * in.color, 1.0); // alpha = 1 : opaque
 }

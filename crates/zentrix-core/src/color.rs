@@ -85,6 +85,40 @@ impl Color {
     pub const fn to_array(self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a]
     }
+    /// Convertit en 4 octets **sRGB** (0 à 255), le format des fichiers image.
+    ///
+    /// # Linéaire contre sRGB
+    ///
+    /// Dans le moteur, les couleurs sont **linéaires** : 0.5 représente
+    /// réellement la moitié de la lumière de 1.0, ce qui rend les calculs
+    /// (mélanges, éclairage) corrects. Mais l'œil distingue mieux les nuances
+    /// sombres : les images stockent donc leurs octets selon une courbe, le
+    /// **sRGB**, qui consacre plus de valeurs aux tons sombres.
+    ///
+    /// Cette fonction applique la courbe ; le GPU fait l'opération inverse
+    /// en lisant une texture `Rgba8UnormSrgb`. Une couleur garde ainsi le même
+    /// rendu, qu'elle vienne d'un sommet ou d'une texture.
+    /// L'opacité (alpha), elle, n'est jamais convertie.
+    pub fn to_srgba8(self) -> [u8; 4] {
+        // `fn` imbriquée : une petite fonction utilitaire visible ici seulement.
+        fn encode(linear: f32) -> f32 {
+            let c = linear.clamp(0.0, 1.0);
+            // La formule officielle du sRGB : une petite partie droite près du
+            // noir, puis une courbe en puissance 1/2.4.
+            if c <= 0.003_130_8 {
+                c * 12.92
+            } else {
+                1.055 * c.powf(1.0 / 2.4) - 0.055
+            }
+        }
+        let byte = |v: f32| (v * 255.0).round() as u8;
+        [
+            byte(encode(self.r)),
+            byte(encode(self.g)),
+            byte(encode(self.b)),
+            byte(self.a.clamp(0.0, 1.0)),
+        ]
+    }
 }
 
 // Le trait `Default` définit la valeur « par défaut » d'un type :
@@ -104,6 +138,14 @@ impl Default for Color {
 mod tests {
     // `super` = le module parent (ce fichier). `*` importe tout ce qu'il contient.
     use super::*;
+
+    #[test]
+    fn conversion_srgb() {
+        assert_eq!(Color::BLACK.to_srgba8(), [0, 0, 0, 255]);
+        assert_eq!(Color::WHITE.to_srgba8(), [255, 255, 255, 255]);
+        // La moitié de la lumière (linéaire) correspond à l'octet 188 en sRGB, pas 128.
+        assert_eq!(Color::rgb(0.5, 0.5, 0.5).to_srgba8()[0], 188);
+    }
 
     #[test]
     fn lerp_aux_extremites() {

@@ -23,6 +23,7 @@ members = [
     "crates/zentrix-platform",  # fenêtre + boucle d'événements          — enveloppe winit
     "crates/zentrix-rhi",       # accès bas niveau au GPU                — enveloppe wgpu
     "crates/zentrix-render",    # rendu haut niveau (pipelines, shaders) — utilise le RHI
+    "crates/zentrix-assets",    # chargement des fichiers (images...)    — sans GPU
     "crates/zentrix-app",       # l'exécutable qui assemble tout
 ]
 
@@ -41,6 +42,7 @@ zentrix-core     = { path = "crates/zentrix-core" }
 zentrix-platform = { path = "crates/zentrix-platform" }
 zentrix-rhi      = { path = "crates/zentrix-rhi" }
 zentrix-render   = { path = "crates/zentrix-render" }
+zentrix-assets   = { path = "crates/zentrix-assets" }
 
 # --- Fenêtre et événements ---
 winit = "0.30"          # crée la fenêtre, reçoit clavier/souris/redimensionnement
@@ -49,6 +51,11 @@ winit = "0.30"          # crée la fenêtre, reçoit clavier/souris/redimensionn
 wgpu = "30"             # API graphique portable (Vulkan / DirectX 12 / Metal / WebGPU)
 pollster = "1"          # permet d'attendre une fonction `async` sans runtime async complet
 bytemuck = { version = "1", features = ["derive"] }  # convertit nos structs en octets pour le GPU
+
+# --- Fichiers ---
+# Décodage d'images. `default-features = false` : on n'active que les formats
+# utiles (PNG, JPEG) au lieu d'une vingtaine, ce qui accélère la compilation.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 # --- Mathématiques ---
 glam = { version = "0.34", features = ["bytemuck"] } # vecteurs / matrices / quaternions (ré-exporté par zentrix_core::math)

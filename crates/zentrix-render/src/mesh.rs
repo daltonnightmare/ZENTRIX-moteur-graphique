@@ -39,33 +39,46 @@ pub struct MeshData {
     pub indices: Vec<u32>,
 }
 
+/// Les UV des 4 coins d'une face rectangulaire, dans l'ordre où nos faces
+/// listent leurs coins : bas-gauche, bas-droite, haut-droite, haut-gauche.
+/// (v = 0 est le HAUT de l'image, d'où le `1.0` pour les coins du bas.)
+const QUAD_UVS: [[f32; 2]; 4] = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
+
 impl MeshData {
     /// Le triangle historique de ZENTRIX (rouge, vert, bleu), dans le plan XY.
     pub fn triangle() -> Self {
         Self {
             vertices: vec![
-                Vertex::new([-0.5, -0.5, 0.0], [1.0, 0.0, 0.0]),
-                Vertex::new([0.5, -0.5, 0.0], [0.0, 1.0, 0.0]),
-                Vertex::new([0.0, 0.5, 0.0], [0.0, 0.0, 1.0]),
+                Vertex::new([-0.5, -0.5, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0]),
+                Vertex::new([0.5, -0.5, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0]),
+                Vertex::new([0.0, 0.5, 0.0], [0.0, 0.0, 1.0], [0.5, 0.0]),
             ],
             indices: vec![0, 1, 2],
         }
     }
 
     /// Un carré de côté 1 couché au sol (plan XZ), face visible vers le haut (+Y).
+    /// La texture le recouvre une fois (UV de 0 à 1).
     pub fn plane(color: [f32; 3]) -> Self {
+        let corners = [
+            [-0.5, 0.0, 0.5],
+            [0.5, 0.0, 0.5],
+            [0.5, 0.0, -0.5],
+            [-0.5, 0.0, -0.5],
+        ];
         Self {
-            vertices: vec![
-                Vertex::new([-0.5, 0.0, 0.5], color),
-                Vertex::new([0.5, 0.0, 0.5], color),
-                Vertex::new([0.5, 0.0, -0.5], color),
-                Vertex::new([-0.5, 0.0, -0.5], color),
-            ],
+            // `zip` avance dans deux tableaux à la fois : (coin 0, uv 0), (coin 1, uv 1)...
+            vertices: corners
+                .into_iter()
+                .zip(QUAD_UVS)
+                .map(|(position, uv)| Vertex::new(position, color, uv))
+                .collect(),
             indices: vec![0, 1, 2, 0, 2, 3],
         }
     }
 
     /// Un cube de côté 1 centré sur l'origine, avec une couleur par face.
+    /// Chaque face reçoit la texture entière.
     pub fn cube() -> Self {
         // Chaque face : sa couleur et ses 4 coins, listés dans le sens
         // anti-horaire QUAND ON REGARDE LA FACE DE L'EXTÉRIEUR (FrontFace::Ccw).
@@ -86,12 +99,34 @@ impl MeshData {
         for (color, corners) in faces {
             // Numéro du premier coin de cette face dans `vertices`.
             let base = mesh.vertices.len() as u32;
-            mesh.vertices
-                .extend(corners.map(|position| Vertex::new(position, color)));
+            mesh.vertices.extend(
+                corners
+                    .into_iter()
+                    .zip(QUAD_UVS)
+                    .map(|(position, uv)| Vertex::new(position, color, uv)),
+            );
             // Deux triangles par face : (0, 1, 2) et (0, 2, 3).
             mesh.indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
         }
         mesh
+    }
+
+    /// Variante « builder » : donne la même couleur à tous les sommets.
+    /// Avec du blanc, la texture apparaît avec ses vraies couleurs.
+    pub fn with_color(mut self, color: [f32; 3]) -> Self {
+        for vertex in &mut self.vertices {
+            vertex.color = color;
+        }
+        self
+    }
+
+    /// Variante « builder » : multiplie les UV, pour **répéter** la texture.
+    /// `with_uv_scale(8.0)` sur un sol : la texture y apparaît 8 × 8 fois.
+    pub fn with_uv_scale(mut self, scale: f32) -> Self {
+        for vertex in &mut self.vertices {
+            vertex.uv = vertex.uv.map(|c| c * scale);
+        }
+        self
     }
 }
 

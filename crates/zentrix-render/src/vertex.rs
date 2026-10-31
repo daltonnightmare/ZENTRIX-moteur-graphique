@@ -4,7 +4,7 @@
 use zentrix_core::math::Mat4;
 use zentrix_rhi::wgpu;
 
-/// Un sommet : une position 3D et une couleur.
+/// Un sommet : une position 3D, une couleur et une coordonnée de texture.
 ///
 /// # Les attributs magiques expliqués
 ///
@@ -18,14 +18,14 @@ use zentrix_rhi::wgpu;
 ///
 /// - `bytemuck::Zeroable` : une struct remplie de zéros est valide.
 ///
-/// En mémoire, un `Vertex` occupe 24 octets :
+/// En mémoire, un `Vertex` occupe 32 octets :
 ///
 /// ```text
-///  octet : 0        4        8        12       16       20       24
-///          ├────────┼────────┼────────┼────────┼────────┼────────┤
-///          │  x     │  y     │  z     │  r     │  g     │  b     │
-///          └────────┴────────┴────────┴────────┴────────┴────────┘
-///           position (location 0)      color (location 1)
+///  octet : 0      4      8      12     16     20     24     28     32
+///          ├──────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
+///          │  x   │  y   │  z   │  r   │  g   │  b   │  u   │  v   │
+///          └──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┘
+///           position (loc. 0)    color (loc. 1)       uv (loc. 2)
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -34,14 +34,30 @@ pub struct Vertex {
     /// de -0.5 à 0.5 quel que soit l'endroit où il est placé. C'est la matrice
     /// modèle de chaque instance, puis la caméra, qui le placent à l'écran.
     pub position: [f32; 3],
-    /// Couleur RGB entre 0 et 1.
+    /// Couleur RGB (linéaire) entre 0 et 1. Elle **multiplie** la couleur de
+    /// la texture : blanc = texture inchangée, rouge = texture teintée de rouge.
     pub color: [f32; 3],
+    /// Coordonnée de texture (« UV ») : quel point de l'image se plaque sur
+    /// ce sommet.
+    ///
+    /// ```text
+    ///  (0,0) ───── u ────▶ (1,0)      u : de gauche à droite de l'image
+    ///    │       image       │        v : de HAUT en bas (convention wgpu)
+    ///    v                   │
+    ///    ▼                   │        Au-delà de 1, l'image se répète
+    ///  (0,1) ───────────── (1,1)      (sampler en mode `Repeat`).
+    /// ```
+    pub uv: [f32; 2],
 }
 
 impl Vertex {
     /// Construit un sommet. `const fn` : utilisable dans des constantes.
-    pub const fn new(position: [f32; 3], color: [f32; 3]) -> Self {
-        Self { position, color }
+    pub const fn new(position: [f32; 3], color: [f32; 3], uv: [f32; 2]) -> Self {
+        Self {
+            position,
+            color,
+            uv,
+        }
     }
 
     /// La liste des attributs, dans le même ordre que les `@location(n)` du shader.
@@ -49,9 +65,10 @@ impl Vertex {
     /// `vertex_attr_array!` est une **macro** (reconnaissable au `!`) : du code
     /// qui écrit du code. Elle calcule automatiquement les décalages (offsets)
     /// de chaque attribut dans la struct.
-    const ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
         0 => Float32x3, // position -> @location(0) dans le shader
         1 => Float32x3, // color    -> @location(1)
+        2 => Float32x2, // uv       -> @location(2)
     ];
 
     /// Décrit au GPU comment lire un tableau de `Vertex` dans un buffer.
@@ -62,7 +79,7 @@ impl Vertex {
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             // Combien d'octets sauter pour passer au sommet suivant.
-            // `size_of` est calculé à la compilation (24 ici).
+            // `size_of` est calculé à la compilation (32 ici).
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             // Avancer d'un élément à chaque SOMMET (l'alternative `Instance`
             // sert au rendu instancié : dessiner 1000 arbres en un appel).
@@ -94,12 +111,12 @@ pub struct InstanceRaw {
 }
 
 impl InstanceRaw {
-    /// Les locations 2 à 5 suivent celles du `Vertex` (0 et 1).
+    /// Les locations 3 à 6 suivent celles du `Vertex` (0 à 2).
     const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
-        2 => Float32x4, // colonne 0
-        3 => Float32x4, // colonne 1
-        4 => Float32x4, // colonne 2
-        5 => Float32x4, // colonne 3 (contient la translation)
+        3 => Float32x4, // colonne 0
+        4 => Float32x4, // colonne 1
+        5 => Float32x4, // colonne 2
+        6 => Float32x4, // colonne 3 (contient la translation)
     ];
 
     /// Décrit au GPU comment lire un tableau d'`InstanceRaw`.
@@ -131,8 +148,8 @@ mod tests {
 
     #[test]
     fn taille_du_vertex() {
-        // 6 flottants de 4 octets = 24 octets. Si ce test casse, le shader
+        // 8 flottants de 4 octets = 32 octets. Si ce test casse, le shader
         // et le layout ne correspondent plus à la struct !
-        assert_eq!(std::mem::size_of::<Vertex>(), 24);
+        assert_eq!(std::mem::size_of::<Vertex>(), 32);
     }
 }

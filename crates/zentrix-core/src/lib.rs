@@ -17,6 +17,7 @@
 // dans le fichier `color.rs` à côté de moi ». Sans cette ligne, le fichier
 // serait tout simplement ignoré par le compilateur !
 mod color;
+mod image;
 pub mod math;
 mod time;
 mod transform;
@@ -26,5 +27,6 @@ mod transform;
 // Les modules eux-mêmes restent privés (pas de `pub mod`) : on choisit donc
 // précisément ce qui fait partie de l'API publique.
 pub use color::Color;
+pub use image::Image;
 pub use time::FrameTimer;
 pub use transform::Transform;

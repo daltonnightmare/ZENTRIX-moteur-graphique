@@ -7,8 +7,9 @@ Il repose sur [`wgpu`](https://wgpu.rs) (une seule base de code pour Vulkan, Dir
 et sur [`winit`](https://docs.rs/winit) pour la fenêtre.
 
 > **État actuel : Phase 2 de la feuille de route.** Une fenêtre s'ouvre et affiche une scène 3D :
-> une grille de cubes qui tournent sur un sol, vue en perspective et explorable avec une caméra libre
-> (clavier + souris), avec test de profondeur et rendu instancié.
+> une grille de caisses en bois texturées et de cubes colorés qui tournent sur un sol en damier, vue en
+> perspective et explorable avec une caméra libre (clavier + souris), avec test de profondeur, rendu
+> instancié et textures avec mipmaps.
 
 ---
 
@@ -61,10 +62,11 @@ Le projet est un **workspace Cargo** : plusieurs petites crates, chacune avec un
 
 | Crate | Rôle | Fichiers clés |
 |-------|------|---------------|
-| [`zentrix-core`](crates/zentrix-core) | Couleurs, chronomètre de frame, maths 3D (`glam`), `Transform`. | `color.rs`, `time.rs`, `math.rs`, `transform.rs` |
+| [`zentrix-core`](crates/zentrix-core) | Couleurs, chronomètre de frame, maths 3D (`glam`), `Transform`, `Image`. | `color.rs`, `time.rs`, `math.rs`, `transform.rs`, `image.rs` |
 | [`zentrix-platform`](crates/zentrix-platform) | Fenêtre, boucle d'événements, état du clavier et de la souris (`Input`). Définit le trait `Application`. | `application.rs`, `runner.rs`, `input.rs` |
 | [`zentrix-rhi`](crates/zentrix-rhi) | Connexion au GPU : instance, adapter, device, queue, surface. | `context.rs`, `error.rs` |
-| [`zentrix-render`](crates/zentrix-render) | Maillages, caméra, depth buffer, pipelines, shaders, passes de rendu. | `renderer.rs`, `mesh.rs`, `camera.rs`, `pipeline.rs`, `shaders/mesh.wgsl` |
+| [`zentrix-render`](crates/zentrix-render) | Maillages, textures, caméra, depth buffer, pipelines, shaders, passes de rendu. | `renderer.rs`, `mesh.rs`, `texture.rs`, `camera.rs`, `pipeline.rs`, `shaders/mesh.wgsl` |
+| [`zentrix-assets`](crates/zentrix-assets) | Chargement des fichiers (images PNG/JPEG) en données du noyau. | `lib.rs` |
 | [`zentrix-app`](crates/zentrix-app) | Point d'entrée `main()` et démo. | `main.rs` |
 
 ```text
@@ -75,7 +77,10 @@ ZENTRIX-moteur-graphique/
 │   ├── zentrix-platform/
 │   ├── zentrix-rhi/
 │   ├── zentrix-render/
+│   ├── zentrix-assets/
 │   └── zentrix-app/
+├── assets/                 ← ressources du jeu (textures...)
+├── journal-de-travail/     ← historique daté des changements
 └── documentation/
     ├── README.md           ← index de la documentation (commencer ici)
     └── guide-debutant/     ← le guide pas à pas

@@ -1,15 +1,16 @@
 //! # zentrix-render
 //!
 //! Le rendu **haut niveau** : il sait *quoi* dessiner (des maillages vus par
-//! une caméra, bientôt des textures et des lumières) et s'appuie sur
+//! une caméra, texturés, bientôt éclairés) et s'appuie sur
 //! `zentrix-rhi` pour *parler* au GPU.
 //!
 //! ## Utilisation
 //!
 //! ```text
 //!  au démarrage :  let cube = renderer.add_mesh(&gpu, &MeshData::cube());
+//!                  let bois = renderer.add_texture(&gpu, &image);
 //!  chaque image :  renderer.render(&mut gpu, &camera, &[
-//!                      DrawCommand { mesh: cube, transform: t.matrix() },
+//!                      DrawCommand { mesh: cube, texture: Some(bois), transform: t.matrix() },
 //!                  ])?;
 //! ```
 //!
@@ -41,9 +42,11 @@ mod depth;
 mod mesh;
 mod pipeline;
 mod renderer;
+mod texture;
 mod vertex;
 
 pub use camera::Camera;
 pub use mesh::{MeshData, MeshHandle};
 pub use renderer::{DrawCommand, Renderer};
+pub use texture::TextureHandle;
 pub use vertex::{InstanceRaw, Vertex};

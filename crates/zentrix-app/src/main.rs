@@ -16,8 +16,8 @@
 //! Logs détaillés : `RUST_LOG=debug cargo run` (bash) ou
 //! `$env:RUST_LOG="debug"; cargo run` (PowerShell).
 //!
-//! La démo : une grille de cubes qui tournent sur un sol, explorée avec une
-//! caméra libre.
+//! La démo : une grille de cubes (caisses en bois texturées et cubes colorés)
+//! qui tournent sur un sol en damier, explorée avec une caméra libre.
 //!
 //! Commandes (touches données pour un clavier AZERTY) :
 //!
@@ -40,11 +40,11 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use zentrix_core::math::{Quat, Vec3};
-use zentrix_core::{Color, Transform};
+use zentrix_core::{Color, Image, Transform};
 use zentrix_platform::{
     Application, Input, KeyCode, MouseButton, Window, WindowConfig, set_cursor_captured,
 };
-use zentrix_render::{Camera, DrawCommand, MeshData, MeshHandle, Renderer};
+use zentrix_render::{Camera, DrawCommand, MeshData, MeshHandle, Renderer, TextureHandle};
 use zentrix_rhi::GpuContext;
 
 use crate::fly_camera::FlyCamera;
@@ -63,7 +63,11 @@ struct GraphicsState {
     gpu: GpuContext,
     renderer: Renderer,
     cube: MeshHandle,
+    /// Le même cube, mais tout blanc : la texture y garde ses vraies couleurs.
+    white_cube: MeshHandle,
     ground: MeshHandle,
+    crate_texture: TextureHandle,
+    ground_texture: TextureHandle,
 }
 
 /// L'état de notre application de démonstration.
@@ -152,7 +156,21 @@ impl Application for ZentrixApp {
         // Chaque maillage n'est envoyé qu'UNE fois au GPU, puis réutilisé par
         // toutes ses instances grâce à son handle.
         let cube = renderer.add_mesh(&gpu, &MeshData::cube());
-        let ground = renderer.add_mesh(&gpu, &MeshData::plane([0.12, 0.12, 0.18]));
+        let white_cube = renderer.add_mesh(&gpu, &MeshData::cube().with_color([1.0; 3]));
+        // Le sol répète sa texture 8 × 8 fois (le sampler est en mode `Repeat`).
+        let ground = renderer.add_mesh(&gpu, &MeshData::plane([1.0; 3]).with_uv_scale(8.0));
+
+        // Les textures : une image chargée depuis le disque, une autre générée.
+        let crate_texture = renderer.add_texture(&gpu, &load_crate_image());
+        let ground_texture = renderer.add_texture(
+            &gpu,
+            &Image::checkerboard(
+                64,
+                2,
+                Color::rgb(0.10, 0.11, 0.16),
+                Color::rgb(0.16, 0.17, 0.24),
+            ),
+        );
 
         let info = gpu.adapter_info();
         window.set_title(&format!(
@@ -160,15 +178,19 @@ impl Application for ZentrixApp {
             info.name, info.backend
         ));
         log::info!(
-            "Commandes : clic gauche = capturer la souris, ZQSD = se déplacer,              Espace/Ctrl = monter/descendre, Maj = vite, molette = vitesse, P = pause, Échap = libérer/quitter"
+            "Commandes : clic gauche = capturer la souris, ZQSD = se déplacer, Espace/Ctrl = monter/descendre"
         );
+        log::info!("            Maj = vite, molette = vitesse, P = pause, Échap = libérer/quitter");
 
         self.graphics = Some(GraphicsState {
             window,
             gpu,
             renderer,
             cube,
+            white_cube,
             ground,
+            crate_texture,
+            ground_texture,
         });
         Ok(())
     }
@@ -201,6 +223,7 @@ impl Application for ZentrixApp {
         // Le sol : un plan de 1×1 agrandi 16 fois, juste sous les cubes.
         self.draws.push(DrawCommand {
             mesh: g.ground,
+            texture: Some(g.ground_texture),
             transform: Transform::from_translation(Vec3::new(0.0, -0.5, 0.0))
                 .with_uniform_scale(16.0)
                 .matrix(),
@@ -219,8 +242,11 @@ impl Application for ZentrixApp {
                 // Chaque cube tourne à sa propre vitesse, autour d'un axe incliné.
                 let speed = 0.5 + 0.15 * (x + z) as f32;
                 let axis = Vec3::new(1.0, 1.0, 0.3).normalize();
+                // Une case sur deux (comme un damier) : une caisse en bois.
+                let is_crate = (x + z) % 2 == 0;
                 self.draws.push(DrawCommand {
-                    mesh: g.cube,
+                    mesh: if is_crate { g.white_cube } else { g.cube },
+                    texture: is_crate.then_some(g.crate_texture),
                     transform: Transform::from_translation(position)
                         .with_rotation(Quat::from_axis_angle(axis, self.time * speed))
                         .matrix(),
@@ -246,6 +272,19 @@ impl Application for ZentrixApp {
     fn on_exit(&mut self) {
         log::info!("Arrêt de ZENTRIX");
     }
+}
+
+/// Charge la texture des caisses depuis `assets/textures/caisse.png`.
+///
+/// Si le fichier manque ou est invalide, la démo ne s'arrête pas : on
+/// affiche l'erreur et on utilise une image de remplacement bien visible
+/// (un damier magenta, la convention des moteurs pour « texture manquante »).
+fn load_crate_image() -> Image {
+    let path = zentrix_assets::asset_dir().join("textures/caisse.png");
+    zentrix_assets::load_image(&path).unwrap_or_else(|error| {
+        log::warn!("{error} — texture de remplacement utilisée");
+        Image::checkerboard(64, 8, Color::rgb(1.0, 0.0, 1.0), Color::BLACK)
+    })
 }
 
 /// Le point d'entrée du programme.

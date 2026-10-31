@@ -40,6 +40,8 @@ L'ordre alphabétique des noms de fichiers donne donc l'ordre chronologique.
 | 2026-10-31 | changement-majeur | [Entrées clavier/souris et caméra libre](2026-10-31_changement-majeur_entrees-et-camera-libre.md) |
 | 2026-10-31 | modification | [Commandes de la démo](2026-10-31_modification_commandes-de-la-demo.md) |
 | 2026-10-31 | suppression | [Caméra en orbite automatique](2026-10-31_suppression_camera-en-orbite.md) |
+| 2026-10-31 | changement-majeur | [Textures et crate `zentrix-assets`](2026-10-31_changement-majeur_textures-et-crate-assets.md) |
+| 2026-10-31 | modification | [API de `Vertex` / `DrawCommand`, message des commandes](2026-10-31_modification_api-vertex-drawcommand-et-logs.md) |
 
 > Les entrées du 2026-07-13 et du 2026-10-18 ont été reconstituées a posteriori à partir de
 > l'historique git (`git log --stat`).

@@ -1,0 +1,14 @@
+[package]
+name = "zentrix-assets"
+description = "Chargement des ressources de ZENTRIX (images...). Ne dépend ni du GPU ni de la fenêtre."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+# Les assets produisent des données du noyau (`zentrix_core::Image`) :
+# le rendu les envoie au GPU sans jamais dépendre de cette crate.
+[dependencies]
+zentrix-core = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
