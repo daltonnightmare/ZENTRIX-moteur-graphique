@@ -3,7 +3,7 @@
 
 use zentrix_core::math::{EulerRot, Quat, Vec3};
 use zentrix_core::{AlphaMode, Color, FrameProfiler, Material, Transform};
-use zentrix_render::RenderStats;
+use zentrix_render::{GpuTimings, RenderStats};
 use zentrix_scene::{DirectionalLight, Entity, MeshRenderer, Name, PointLight, Scene, SpotLight};
 use zentrix_ui::egui;
 
@@ -31,6 +31,7 @@ pub struct Toggles<'a> {
     pub freeze_culling: &'a mut bool,
     pub multithreading: &'a mut bool,
     pub vsync: &'a mut bool,
+    pub gpu_timing: &'a mut bool,
 }
 
 /// Les mesures de performance à afficher. `Copy` : de simples lectures,
@@ -40,6 +41,8 @@ pub struct Perf<'a> {
     pub fps: f32,
     pub stats: RenderStats,
     pub profiler: &'a FrameProfiler,
+    /// Le temps GPU de chaque étape ; `None` si le GPU ne permet pas de le mesurer.
+    pub gpu: Option<GpuTimings>,
     /// Le champ de stress est-il présent ?
     pub stress: bool,
 }
@@ -405,6 +408,8 @@ fn performance_section(ui: &mut egui::Ui, toggles: Toggles, perf: &Perf, request
                 }
             });
 
+            gpu_section(ui, perf.gpu, toggles.gpu_timing, total);
+
             let s = perf.stats;
             ui.label(format!(
                 "Objets : {} · dessinés : {} (dont {} transparents) · ombres : {}",
@@ -448,6 +453,40 @@ fn performance_section(ui: &mut egui::Ui, toggles: Toggles, perf: &Perf, request
             };
             requests.toggle_stress = ui.button(label).clicked();
         });
+}
+
+/// Le temps passé par le **GPU** sur chaque étape de l'image. Les barres
+/// sont rapportées à la durée d'une image (`frame_ms`, mesurée côté CPU) :
+/// si le total GPU s'en approche, c'est la carte graphique qui limite les FPS.
+fn gpu_section(ui: &mut egui::Ui, gpu: Option<GpuTimings>, enabled: &mut bool, frame_ms: f32) {
+    let Some(gpu) = gpu else {
+        ui.label("GPU : ce GPU ne permet pas de mesurer son temps (pas d'horodatages).");
+        return;
+    };
+    ui.horizontal(|ui| {
+        ui.checkbox(enabled, "Mesures GPU").on_hover_text(
+            "Le temps passé par la carte graphique sur chaque étape (horodatages du GPU)",
+        );
+        if *enabled && gpu.measured {
+            ui.label(format!("total {:.2} ms", gpu.total.average_ms));
+        }
+    });
+    if !*enabled || !gpu.measured {
+        return;
+    }
+    egui::Grid::new("gpu").num_columns(3).show(ui, |ui| {
+        for section in gpu.sections {
+            ui.label(format!("GPU · {}", section.name));
+            ui.monospace(format!("{:6.2} ms", section.average_ms));
+            let share = if frame_ms > 0.0 {
+                section.average_ms / frame_ms
+            } else {
+                0.0
+            };
+            ui.add(egui::ProgressBar::new(share.min(1.0)).desired_width(90.0));
+            ui.end_row();
+        }
+    });
 }
 
 /// Le graphique des dernières images : une barre par image, d'autant plus

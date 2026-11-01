@@ -88,13 +88,24 @@ impl GpuContext {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("ZENTRIX Device"),
-                // On ne demande aucune fonctionnalité optionnelle pour l'instant,
-                // et les limites par défaut (compatibles avec quasiment tous les GPU).
-                required_features: wgpu::Features::empty(),
+                // Une seule fonctionnalité optionnelle, et seulement si le GPU
+                // la propose : les horodatages, pour mesurer le temps GPU de
+                // chaque étape de l'image (voir gpu_timer.rs dans zentrix-render).
+                // Les limites restent celles par défaut (compatibles avec
+                // quasiment tous les GPU).
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
                 required_limits: wgpu::Limits::default(),
                 ..Default::default()
             })
             .await?;
+        log::info!(
+            "Mesures GPU (horodatages) : {}",
+            if device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+                "disponibles"
+            } else {
+                "non proposées par ce GPU"
+            }
+        );
 
         // --- 5. Configuration de la surface -----------------------------------
         let capabilities = surface.get_capabilities(&adapter);

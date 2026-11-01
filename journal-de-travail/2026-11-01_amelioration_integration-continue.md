@@ -29,6 +29,15 @@ La piste « Intégration continue » de la
 [Phase 7](../documentation/guide-debutant/feuille-de-route/07-mondes-gameplay-outils.md)
 est marquée ✅.
 
+## Première exécution
+
+Réussie du premier coup : formatage en 7 s, Linux en 6 min 52 s, Windows en 11 min 23 s
+(compilation complète, avant que le cache serve). ZENTRIX compile et passe ses tests sous
+Linux.
+
+GitHub signalait que `actions/checkout@v4` repose sur Node.js 20, en fin de vie : le
+workflow utilise maintenant `actions/checkout@v5`.
+
 ## Pourquoi
 
 C'est l'étape 2 de l'ordre décidé (commit, intégration continue, mesures GPU, éditeur) : la

@@ -33,7 +33,7 @@ apportent, dans l'ordre conseillé à l'intérieur de chaque groupe.
 |-------|---------|------------|
 | **Éditeur** | Sélection par clic dans la scène (lancer de rayon), *gizmos* pour déplacer / tourner / agrandir à la souris, création et suppression d'entités, annuler / refaire (Ctrl+Z) | ⭐⭐⭐ |
 | **Rechargement à chaud** | Modifier un shader `.wgsl`, une texture ou une scène et voir le résultat sans relancer (surveillance des fichiers avec la crate `notify`) | ⭐⭐ |
-| **Mesures GPU** | *Timestamp queries* : le temps de chaque passe sur la carte graphique, affiché à côté du profileur CPU | ⭐⭐ |
+| **Mesures GPU** ✅ | *Timestamp queries* : le temps de chaque passe sur la carte graphique, affiché à côté du profileur CPU — réalisées : [gpu_timer.rs](../../../crates/zentrix-render/src/gpu_timer.rs) (option `TIMESTAMP_QUERY` demandée quand le GPU la propose, 5 repères entre les groupes de passes : ombres, passe principale, post-traitement, interface ; lecture sans attente grâce à un anneau de 3 buffers ; moyennes glissantes), `Renderer::gpu_timings`, lignes « GPU · » dans le panneau Performance (désactivables). Sur l'Iris Xe : environ 5,3 ms par image, dont 1 ms d'ombres et 2,7 ms de passe principale. Pistes suivantes : détail des passes du post-traitement, historique graphique du temps GPU | ⭐⭐ |
 
 ---
 

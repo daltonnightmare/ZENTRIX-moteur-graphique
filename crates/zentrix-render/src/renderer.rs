@@ -15,6 +15,7 @@ use crate::culling::{self, Culling, DrawLists, Item, SHADOW_MASKED};
 use crate::debug::{DebugLines, LineVertex};
 use crate::depth::DepthTexture;
 use crate::environment::{self, Environment, Sky};
+use crate::gpu_timer::{GpuTimer, GpuTimings};
 use crate::lighting::{LightRaw, Lighting, LocalLight};
 use crate::mesh::{Mesh, MeshHandle};
 use crate::pipeline::{
@@ -345,6 +346,12 @@ pub struct Renderer {
     /// Le post-traitement : l'image HDR où la scène est dessinée, le bloom,
     /// le tone mapping et le FXAA (voir postprocess.rs).
     post: PostProcess,
+    /// Les mesures GPU (voir gpu_timer.rs) ; `None` si le GPU ne propose
+    /// pas les horodatages.
+    gpu_timer: Option<GpuTimer>,
+    /// Les mesures GPU sont-elles prises ? (Elles ajoutent quelques passes
+    /// vides : on peut les couper pour comparer.)
+    pub gpu_timing_enabled: bool,
 }
 
 impl Renderer {
@@ -471,6 +478,8 @@ impl Renderer {
             bloom_threshold: 1.0,
             fxaa_enabled: true,
             post: PostProcess::new(device, gpu.surface_format(), gpu.size()),
+            gpu_timer: GpuTimer::new(device, gpu.queue()),
+            gpu_timing_enabled: true,
             environment_enabled: true,
             environment_intensity: 1.0,
             culling_enabled: true,
@@ -536,6 +545,12 @@ impl Renderer {
     /// Ce que le rendu a fait pendant la dernière image.
     pub fn stats(&self) -> RenderStats {
         self.stats
+    }
+
+    /// Le temps passé par le GPU sur chaque étape de l'image (moyennes
+    /// glissantes). `None` si le GPU ne permet pas de le mesurer.
+    pub fn gpu_timings(&self) -> Option<GpuTimings> {
+        self.gpu_timer.as_ref().map(|t| *t.timings())
     }
 
     /// La matrice de la caméra figée par `freeze_culling` (pour dessiner la
@@ -700,6 +715,21 @@ impl Renderer {
                 label: Some("Frame Encoder"),
             });
 
+        // Les mesures GPU : un repère entre chaque groupe de passes (voir
+        // gpu_timer.rs). `timer` vaut `None` si l'image n'est pas mesurée.
+        let measured = self.gpu_timing_enabled
+            && self
+                .gpu_timer
+                .as_mut()
+                .is_some_and(|timer| timer.begin_frame(gpu.device()));
+        let timer = self.gpu_timer.as_ref().filter(|_| measured);
+        let mark = |encoder: &mut wgpu::CommandEncoder, index| {
+            if let Some(timer) = timer {
+                timer.mark(encoder, index);
+            }
+        };
+        mark(&mut encoder, 0);
+
         // 5. Les passes d'ombre : les mêmes objets, vus depuis la lumière,
         //    une fois par tranche, chacune dans sa couche de la shadow map.
         //    Elles doivent être terminées AVANT la passe principale, qui lit
@@ -746,6 +776,7 @@ impl Renderer {
             );
             self.stats.shadow_draw_calls += calls;
         }
+        mark(&mut encoder, 1);
 
         // 6. La passe principale : une séquence de dessins vers l'image HDR.
         //
@@ -843,6 +874,7 @@ impl Renderer {
                 render_pass.draw(0..line_vertices, 0..1);
             }
         } // <- `render_pass` est détruite ici, l'emprunt de `encoder` prend fin.
+        mark(&mut encoder, 2);
 
         // 7. Le post-traitement : bloom, tone mapping et FXAA, de l'image
         //    HDR vers l'image de la fenêtre (voir postprocess.rs).
@@ -861,6 +893,7 @@ impl Renderer {
             self.post
                 .run(&mut encoder, gpu.queue(), &settings, &frame.view);
         }
+        mark(&mut encoder, 3);
 
         // 8. L'overlay (interface...), par-dessus l'image terminée.
         let mut extra_commands = Vec::new();
@@ -887,6 +920,10 @@ impl Renderer {
                 .forget_lifetime();
             overlay.draw(&mut pass);
         }
+        mark(&mut encoder, 4);
+        if let Some(timer) = timer {
+            timer.resolve(&mut encoder);
+        }
 
         // 9. Fermer le carnet et l'envoyer au GPU. C'est seulement maintenant
         //    que le GPU commence réellement à travailler. Les commandes de
@@ -896,6 +933,10 @@ impl Renderer {
                 .into_iter()
                 .chain(std::iter::once(encoder.finish())),
         );
+        // La lecture des mesures de cette image, quand le GPU aura fini.
+        if measured && let Some(timer) = &mut self.gpu_timer {
+            timer.after_submit();
+        }
 
         // 10. Afficher l'image. `present` consomme `frame` : on ne peut plus l'utiliser.
         gpu.present(frame);

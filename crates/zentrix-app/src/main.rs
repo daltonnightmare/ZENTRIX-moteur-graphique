@@ -720,6 +720,7 @@ impl Application for ZentrixApp {
                 fps: self.last_fps,
                 stats: g.renderer.stats(),
                 profiler: &self.profiler,
+                gpu: g.renderer.gpu_timings(),
                 stress: self.stress,
             };
             // La fermeture capture des champs DIFFÉRENTS de `self` et de `g` :
@@ -745,6 +746,7 @@ impl Application for ZentrixApp {
                     freeze_culling: &mut g.renderer.freeze_culling,
                     multithreading: &mut g.renderer.multithreading,
                     vsync: &mut vsync,
+                    gpu_timing: &mut g.renderer.gpu_timing_enabled,
                 };
                 requests = self.inspector.show(ctx, &mut self.scene, toggles, perf);
                 self.game.hud(ctx, self.mouse_captured);
