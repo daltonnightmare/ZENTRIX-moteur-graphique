@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use winit::event::WindowEvent;
 use winit::keyboard::KeyCode;
 use winit::window::Window;
 
@@ -85,6 +86,18 @@ pub trait Application {
     /// sont volontairement inutilisés dans l'implémentation par défaut
     /// (sinon il afficherait un avertissement).
     fn on_resize(&mut self, _width: u32, _height: u32) {}
+
+    /// Appelée pour CHAQUE événement brut de la fenêtre, avant tout le reste.
+    ///
+    /// Sert aux bibliothèques qui ont besoin des événements winit d'origine,
+    /// comme une interface graphique (`zentrix-ui`). Renvoyer `true` signifie
+    /// « cet événement est pour moi » : un clic sur un panneau ne doit pas
+    /// aussi faire tirer le personnage. La plateforme ne transmet alors pas
+    /// l'appui à [`Input`] (les relâchements, eux, sont toujours transmis,
+    /// sinon une touche pourrait rester « enfoncée » pour toujours).
+    fn on_window_event(&mut self, _event: &WindowEvent) -> bool {
+        false
+    }
 
     /// Appelée quand une touche est enfoncée (`pressed == true`) ou relâchée.
     fn on_key(&mut self, _key: KeyCode, _pressed: bool) {}

@@ -11,6 +11,11 @@ zentrix-core = { workspace = true }
 zentrix-rhi = { workspace = true }
 bytemuck = { workspace = true }
 log = { workspace = true }
+# Répartir le tri des objets entre les cœurs du processeur (culling.rs).
+rayon = { workspace = true }
+# Les zones mesurées par Tracy (`profiling::scope!`) : sans la feature
+# `tracy` de zentrix-app, ces macros ne font rien et ne coûtent rien.
+profiling = { workspace = true }
 
 # Dépendances utilisées seulement par `cargo test`.
 [dev-dependencies]

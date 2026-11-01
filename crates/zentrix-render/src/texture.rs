@@ -3,10 +3,26 @@
 use zentrix_core::Image;
 use zentrix_rhi::wgpu;
 
-/// Le format des textures de couleur. `Srgb` : le GPU convertit
-/// automatiquement les octets sRGB du fichier en couleurs linéaires au moment
-/// de la lecture dans le shader (voir `Color::to_srgba8`).
-const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+/// Ce que contient une texture, qui décide de son format sur le GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextureKind {
+    /// Des couleurs, en sRGB : le GPU convertit automatiquement les octets
+    /// du fichier en couleurs linéaires au moment de la lecture dans le
+    /// shader (voir `Color::to_srgba8`).
+    Color,
+    /// Des données (normales...) : les octets sont lus tels quels, de 0 à 1.
+    /// Une conversion sRGB fausserait les directions d'une normal map.
+    Data,
+}
+
+impl TextureKind {
+    fn format(self) -> wgpu::TextureFormat {
+        match self {
+            TextureKind::Color => wgpu::TextureFormat::Rgba8UnormSrgb,
+            TextureKind::Data => wgpu::TextureFormat::Rgba8Unorm,
+        }
+    }
+}
 
 /// Une référence légère vers une texture stockée dans le `Renderer`
 /// (même principe que `MeshHandle`).
@@ -22,37 +38,104 @@ impl TextureHandle {
     }
 }
 
-/// Une texture prête à l'emploi : on ne garde que son **bind group**, qui
-/// référence la vue de la texture et le sampler (et les maintient en vie).
-pub(crate) struct Texture {
-    pub bind_group: wgpu::BindGroup,
+/// Les textures d'un **matériau**, toutes facultatives. Une texture absente
+/// est remplacée par une texture neutre : blanche (qui ne change rien à
+/// une multiplication), ou « plate » pour la normal map.
+///
+/// | Texture              | Contenu (convention glTF)                     | Format |
+/// |----------------------|-----------------------------------------------|--------|
+/// | `base_color`         | la couleur                                    | sRGB   |
+/// | `normal`             | le relief                                     | données |
+/// | `metallic_roughness` | vert = rugosité, bleu = métal                 | données |
+/// | `occlusion`          | rouge = part de lumière ambiante reçue        | données |
+/// | `emissive`           | la couleur de la lumière émise                | sRGB   |
+///
+/// « Données » : créée avec `Renderer::add_normal_map` (ou
+/// `add_data_texture`), sans conversion sRGB.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MaterialTextures {
+    pub base_color: Option<TextureHandle>,
+    pub normal: Option<TextureHandle>,
+    pub metallic_roughness: Option<TextureHandle>,
+    pub occlusion: Option<TextureHandle>,
+    pub emissive: Option<TextureHandle>,
 }
 
-/// Le layout du bind group n°1 (`@group(1)` dans mesh.wgsl) : une texture 2D
-/// et un sampler, lus par le fragment shader.
-pub(crate) fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+impl MaterialTextures {
+    /// Seulement une texture de couleur.
+    pub fn color(texture: TextureHandle) -> Self {
+        Self {
+            base_color: Some(texture),
+            ..Self::default()
+        }
+    }
+}
+
+/// Une texture prête à l'emploi : on garde sa **vue** (la façon dont les
+/// shaders la voient). Les bind groups qui la référencent sont créés à la
+/// demande par le `Renderer`, un par combinaison de textures de matériau.
+pub(crate) struct Texture {
+    pub view: wgpu::TextureView,
+}
+
+/// Le layout du bind group n°1 (`@group(1)` dans mesh.wgsl) : les 5
+/// textures d'un matériau (dans l'ordre de [`MaterialTextures`]) et un
+/// sampler, lus par le fragment shader.
+pub(crate) fn create_material_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let texture = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            // `Float { filterable: true }` : des valeurs que le sampler
+            // peut mélanger (filtrage linéaire).
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Texture Bind Group Layout"),
+        label: Some("Material Bind Group Layout"),
         entries: &[
+            texture(0),
+            texture(1),
+            texture(2),
+            texture(3),
+            texture(4),
             wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    // `Float { filterable: true }` : des couleurs que le sampler
-                    // peut mélanger (filtrage linéaire).
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
+                binding: 5,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
         ],
+    })
+}
+
+/// Le bind group d'un matériau : ses 5 textures (déjà remplacées par les
+/// textures neutres si besoin) et le sampler commun.
+pub(crate) fn create_material_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    views: [&wgpu::TextureView; 5],
+) -> wgpu::BindGroup {
+    let mut entries: Vec<wgpu::BindGroupEntry> = views
+        .iter()
+        .zip(0u32..)
+        .map(|(view, binding)| wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(view),
+        })
+        .collect();
+    entries.push(wgpu::BindGroupEntry {
+        binding: 5,
+        resource: wgpu::BindingResource::Sampler(sampler),
+    });
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Material Bind Group"),
+        layout,
+        entries: &entries,
     })
 }
 
@@ -85,9 +168,8 @@ impl Texture {
     pub fn upload(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        layout: &wgpu::BindGroupLayout,
-        sampler: &wgpu::Sampler,
         image: &Image,
+        kind: TextureKind,
         label: &str,
     ) -> Self {
         // Les mipmaps sont calculées sur le CPU (voir `Image::mip_chain`).
@@ -120,7 +202,7 @@ impl Texture {
             mip_level_count: chain.len() as u32,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: COLOR_FORMAT,
+            format: kind.format(),
             // Lue par les shaders, et remplie par une copie depuis le CPU.
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
@@ -151,21 +233,6 @@ impl Texture {
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(label),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        });
-
-        Self { bind_group }
+        Self { view }
     }
 }

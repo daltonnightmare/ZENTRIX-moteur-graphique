@@ -81,9 +81,19 @@ dans la fenêtre pour piloter la caméra :
 | `Espace` / `Ctrl`     | Monter / descendre                              |
 | `Maj` (maintenue)     | Aller 3 fois plus vite                          |
 | molette               | Régler la vitesse de déplacement                |
-| `P`                   | Mettre en pause l'animation des cubes           |
+| `P`                   | Mettre en pause l'animation et la physique      |
 | `F1`                  | Afficher / masquer la grille, les axes et la direction de la lumière |
 | `F2`                  | Afficher / masquer les boîtes et les liens parent → enfant |
+| `F3`                  | Activer / désactiver les ombres portées         |
+| `F4`                  | Afficher / masquer l'inspecteur (interface egui) |
+| `F5` / `F9`           | Sauvegarder / recharger la scène (`assets/scenes/demo.ron`) |
+| `F6`                  | Activer / désactiver le tone mapping            |
+| `F7`                  | Activer / désactiver l'environnement (ciel, reflets) |
+| `B`                   | Lancer une balle droit devant                   |
+| clic droit (souris capturée) | Pousser l'objet visé (lancer de rayon)   |
+| `F8`                  | Couper / remettre le son                        |
+| `N`                   | Ajouter / retirer le champ de stress (4 096 cubes) |
+| `L`                   | Passer à la nuit (seules les lampes éclairent) / au jour |
 | `Échap`               | Libérer la souris, puis quitter                 |
 
 > Les captures de ce guide montrent parfois l'ancienne démo (un triangle sur fond animé) :

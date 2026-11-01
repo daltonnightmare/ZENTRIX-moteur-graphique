@@ -145,6 +145,9 @@ impl<A: Application> ApplicationHandler for PlatformRunner<A> {
 
     /// Appelé pour chaque événement concernant une fenêtre.
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // L'application (son interface graphique) voit l'événement en premier.
+        let consumed = self.app.on_window_event(&event);
+
         match event {
             // L'utilisateur a cliqué sur la croix.
             WindowEvent::CloseRequested => {
@@ -171,17 +174,24 @@ impl<A: Application> ApplicationHandler for PlatformRunner<A> {
                 ..
             } => {
                 let pressed = state == ElementState::Pressed;
-                self.input.on_key(key, pressed);
-                self.app.on_key(key, pressed);
+                // Un appui consommé (texte tapé dans l'interface) n'est pas
+                // transmis au jeu ; un relâchement l'est toujours.
+                if !(consumed && pressed) {
+                    self.input.on_key(key, pressed);
+                    self.app.on_key(key, pressed);
+                }
             }
 
             // Un bouton de la souris.
             WindowEvent::MouseInput { state, button, .. } => {
-                self.input.on_button(button, state == ElementState::Pressed);
+                let pressed = state == ElementState::Pressed;
+                if !(consumed && pressed) {
+                    self.input.on_button(button, pressed);
+                }
             }
 
             // La molette (ou le défilement à deux doigts d'un pavé tactile).
-            WindowEvent::MouseWheel { delta, .. } => {
+            WindowEvent::MouseWheel { delta, .. } if !consumed => {
                 let lines = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / PIXELS_PER_SCROLL_LINE,
@@ -223,6 +233,10 @@ impl<A: Application> ApplicationHandler for PlatformRunner<A> {
                 // Les appuis et déplacements de cette image ont été vus : on
                 // repart de zéro pour la suivante.
                 self.input.end_frame();
+
+                // Pour Tracy : « une image vient de se terminer ». Sans la
+                // feature `tracy`, cette macro ne fait rien.
+                profiling::finish_frame!();
             }
 
             // `_` attrape tous les autres événements : on les ignore pour l'instant.

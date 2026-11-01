@@ -7,3 +7,6 @@
 *.swp
 .DS_Store
 Thumbs.db
+
+# Sauvegardes de scènes faites avec F5 dans la démo (données de l'utilisateur, pas du code)
+/assets/scenes/

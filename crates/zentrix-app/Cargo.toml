@@ -16,7 +16,22 @@ zentrix-rhi = { workspace = true }
 zentrix-render = { workspace = true }
 zentrix-assets = { workspace = true }
 zentrix-scene = { workspace = true }
+zentrix-ui = { workspace = true }
+zentrix-physics = { workspace = true }
+zentrix-audio = { workspace = true }
+serde = { workspace = true }
 pollster = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 anyhow = { workspace = true }
+profiling = { workspace = true }
+
+# Les « features » : des options de compilation, désactivées par défaut.
+#
+#   cargo run --release --features tracy
+#
+# active les mesures pour le profileur Tracy (https://github.com/wolfpld/tracy) :
+# chaque `profiling::scope!` du moteur devient une zone chronométrée, visible
+# en direct dans l'application Tracy. Sans la feature, ces macros ne font rien.
+[features]
+tracy = ["profiling/profile-with-tracy"]

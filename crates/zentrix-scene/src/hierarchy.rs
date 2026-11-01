@@ -58,9 +58,9 @@ impl GlobalTransform {
 /// deux `HashMap` à chaque image).
 #[derive(Default)]
 pub(crate) struct PropagationCache {
-    /// Pour chaque entité : sa matrice locale et son parent éventuel.
-    locals: HashMap<Entity, (Mat4, Option<Entity>)>,
-    /// Les matrices globales déjà calculées.
+    /// Pour chaque entité qui a un parent : sa matrice locale et ce parent.
+    locals: HashMap<Entity, (Mat4, Entity)>,
+    /// Les matrices globales des enfants déjà calculées.
     globals: HashMap<Entity, Mat4>,
     /// Les entités qui n'ont pas encore de composant `GlobalTransform`.
     missing: Vec<(Entity, Mat4)>,
@@ -68,9 +68,18 @@ pub(crate) struct PropagationCache {
 
 /// Calcule le [`GlobalTransform`] de toutes les entités qui ont un `Transform`.
 ///
-/// Méthode : pour chaque entité, global = global(parent) × local. Les
-/// résultats sont mémorisés, si bien que chaque entité n'est calculée
-/// qu'une fois, même si elle a beaucoup de descendants.
+/// Méthode : pour chaque entité, global = global(parent) × local.
+///
+/// # Le cas courant d'abord
+///
+/// Presque toutes les entités sont des **racines** (sans parent) : leur
+/// global est simplement leur local. Elles sont traitées par une requête
+/// directe, sans aucune table. Seuls les enfants passent par les `HashMap`
+/// et la récursion, avec mémorisation : chaque enfant n'est calculé qu'une
+/// fois, même s'il a beaucoup de descendants.
+///
+/// (Avant, toutes les entités passaient par les tables : avec 4 000 cubes,
+/// le profileur montrait cette fonction comme la plus lente de l'image.)
 pub(crate) fn propagate(world: &mut World, cache: &mut PropagationCache) {
     let PropagationCache {
         locals,
@@ -81,40 +90,54 @@ pub(crate) fn propagate(world: &mut World, cache: &mut PropagationCache) {
     globals.clear();
     missing.clear();
 
-    // 1. Relever les matrices locales et les liens de parenté.
-    //    `Option<&Parent>` : le composant est facultatif dans cette requête.
-    for (entity, transform, parent) in world
-        .query::<(Entity, &Transform, Option<&Parent>)>()
-        .iter()
-    {
-        locals.insert(entity, (transform.matrix(), parent.map(|p| p.0)));
-    }
-
-    // 2. Calculer les matrices globales.
-    let entities: Vec<Entity> = locals.keys().copied().collect();
-    for entity in entities {
-        global_of(entity, locals, globals, 0);
-    }
-
-    // 3. Les écrire dans le monde. On ne peut pas AJOUTER un composant pendant
-    //    qu'on parcourt une requête : les entités sans `GlobalTransform` sont
-    //    mises de côté et complétées ensuite.
-    for (&entity, &matrix) in globals.iter() {
-        match world.get::<&mut GlobalTransform>(entity) {
-            Ok(mut global) => global.0 = matrix,
-            Err(_) => missing.push((entity, matrix)),
-        }
-    }
+    // 1. Donner un `GlobalTransform` aux nouvelles entités. On ne peut pas
+    //    AJOUTER un composant pendant qu'on parcourt une requête : on les
+    //    relève d'abord, puis on les complète. En régime normal, la liste
+    //    est vide.
+    missing.extend(
+        world
+            .query::<hecs::Without<(Entity, &Transform), &GlobalTransform>>()
+            .iter()
+            .map(|(entity, transform)| (entity, transform.matrix())),
+    );
     for &(entity, matrix) in missing.iter() {
         // L'entité existe forcément : on vient de la lire.
         let _ = world.insert_one(entity, GlobalTransform(matrix));
     }
+
+    // 2. Les racines : global = local. `query_mut` donne un accès en
+    //    écriture sans vérification d'emprunt à chaque entité (plus rapide).
+    for (transform, global) in
+        world.query_mut::<hecs::Without<(&Transform, &mut GlobalTransform), &Parent>>()
+    {
+        global.0 = transform.matrix();
+    }
+
+    // 3. Les enfants : relever leurs matrices locales et leurs parents...
+    for (entity, transform, parent) in world.query::<(Entity, &Transform, &Parent)>().iter() {
+        locals.insert(entity, (transform.matrix(), parent.0));
+    }
+    if locals.is_empty() {
+        return;
+    }
+    // ... calculer leurs matrices globales...
+    let children: Vec<Entity> = locals.keys().copied().collect();
+    for entity in children {
+        global_of(entity, world, locals, globals, 0);
+    }
+    // ... et les écrire.
+    for (&entity, &matrix) in globals.iter() {
+        if let Ok(mut global) = world.get::<&mut GlobalTransform>(entity) {
+            global.0 = matrix;
+        }
+    }
 }
 
-/// La matrice globale d'une entité (récursif, avec mémorisation).
+/// La matrice globale d'un enfant (récursif, avec mémorisation).
 fn global_of(
     entity: Entity,
-    locals: &HashMap<Entity, (Mat4, Option<Entity>)>,
+    world: &World,
+    locals: &HashMap<Entity, (Mat4, Entity)>,
     globals: &mut HashMap<Entity, Mat4>,
     depth: usize,
 ) -> Mat4 {
@@ -122,23 +145,29 @@ fn global_of(
         return global;
     }
     let (local, parent) = locals[&entity];
-    let global = match parent {
-        // Un parent valide (il a un `Transform`) : on compose.
-        Some(parent) if locals.contains_key(&parent) => {
-            if depth >= MAX_DEPTH {
-                log::warn!(
-                    "Hiérarchie trop profonde ou cyclique autour de {entity:?} (> {MAX_DEPTH} niveaux)"
-                );
-                local
-            } else {
-                // L'ordre compte : d'abord le local (repère du parent), puis
-                // le global du parent (repère du monde).
-                global_of(parent, locals, globals, depth + 1) * local
-            }
+    let parent_global = if locals.contains_key(&parent) {
+        // Le parent est lui-même un enfant : on remonte.
+        if depth >= MAX_DEPTH {
+            log::warn!(
+                "Hiérarchie trop profonde ou cyclique autour de {entity:?} (> {MAX_DEPTH} niveaux)"
+            );
+            None
+        } else {
+            Some(global_of(parent, world, locals, globals, depth + 1))
         }
-        // Pas de parent, ou un parent disparu : l'entité est une racine.
-        _ => local,
+    } else {
+        // Le parent est une racine, déjà calculée à l'étape 2... s'il a
+        // bien un `Transform`.
+        world
+            .entity(parent)
+            .ok()
+            .filter(|parent| parent.has::<Transform>())
+            .and_then(|parent| parent.get::<&GlobalTransform>().map(|g| g.0))
     };
+    // L'ordre compte : d'abord le local (repère du parent), puis le global
+    // du parent (repère du monde). Sans parent valide (disparu, sans
+    // `Transform`), l'entité est une racine.
+    let global = parent_global.map_or(local, |parent| parent * local);
     globals.insert(entity, global);
     global
 }

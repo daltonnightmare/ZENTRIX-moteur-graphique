@@ -16,9 +16,13 @@
 // `mod color;` dit à Rust : « il existe un module nommé `color`, son code est
 // dans le fichier `color.rs` à côté de moi ». Sans cette ligne, le fichier
 // serait tout simplement ignoré par le compilateur !
+mod bounds;
 mod color;
 mod image;
+mod material;
 pub mod math;
+mod mesh;
+mod profiler;
 mod time;
 mod transform;
 
@@ -26,7 +30,11 @@ mod transform;
 // `zentrix_core::Color` au lieu de `zentrix_core::color::Color`.
 // Les modules eux-mêmes restent privés (pas de `pub mod`) : on choisit donc
 // précisément ce qui fait partie de l'API publique.
+pub use bounds::{Aabb, Frustum};
 pub use color::Color;
 pub use image::Image;
+pub use material::{AlphaMode, Material};
+pub use mesh::{MeshData, Vertex};
+pub use profiler::{FrameProfiler, Section};
 pub use time::FrameTimer;
 pub use transform::Transform;

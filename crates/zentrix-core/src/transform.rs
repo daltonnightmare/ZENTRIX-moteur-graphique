@@ -18,7 +18,9 @@ use crate::math::{Mat4, Quat, Vec3};
 /// // Le point d'origine de l'objet se retrouve en (1, 2, 3) dans le monde.
 /// assert_eq!(t.matrix().transform_point3(Vec3::ZERO), Vec3::new(1.0, 2.0, 3.0));
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq)]
+// `Serialize` / `Deserialize` (crate `serde`) : le type peut être converti
+// en texte (RON, JSON...) et reconstruit, pour sauvegarder les scènes.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Transform {
     /// Position dans le monde.
     pub translation: Vec3,
@@ -41,6 +43,21 @@ impl Transform {
         Self {
             translation,
             ..Self::IDENTITY
+        }
+    }
+
+    /// Décompose une matrice en position, rotation et taille (l'inverse de
+    /// [`Transform::matrix`]). Utile pour les transformations venues d'un
+    /// fichier (glTF), souvent stockées sous forme de matrice.
+    ///
+    /// Une matrice avec du **cisaillement** (déformation en biais, rare) ne
+    /// peut pas s'écrire ainsi : le résultat n'en est qu'une approximation.
+    pub fn from_matrix(matrix: Mat4) -> Self {
+        let (scale, rotation, translation) = matrix.to_scale_rotation_translation();
+        Self {
+            translation,
+            rotation,
+            scale,
         }
     }
 
@@ -78,6 +95,17 @@ impl Default for Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_matrix_est_l_inverse_de_matrix() {
+        let t = Transform::from_translation(Vec3::new(1.0, 2.0, 3.0))
+            .with_rotation(Quat::from_rotation_z(0.7))
+            .with_uniform_scale(1.5);
+        let retour = Transform::from_matrix(t.matrix());
+        assert!(retour.translation.abs_diff_eq(t.translation, 1e-5));
+        assert!(retour.scale.abs_diff_eq(t.scale, 1e-5));
+        assert!(retour.rotation.abs_diff_eq(t.rotation, 1e-5));
+    }
 
     #[test]
     fn identite_ne_change_rien() {

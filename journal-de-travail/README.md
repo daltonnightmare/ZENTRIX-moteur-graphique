@@ -51,6 +51,28 @@ L'ordre alphabétique des noms de fichiers donne donc l'ordre chronologique.
 | 2026-10-31 | changement-majeur | [Éclairage : normales, lumière directionnelle, Lambert + Blinn-Phong](2026-10-31_changement-majeur_eclairage.md) |
 | 2026-10-31 | amelioration | [Validation des shaders WGSL dans les tests](2026-10-31_amelioration_validation-des-shaders.md) |
 | 2026-10-31 | modification | [API : `Vertex` avec normale, `FrameUniform`, lumière de la scène](2026-10-31_modification_api-vertex-normale-et-frame-uniform.md) |
+| 2026-10-31 | changement-majeur | [Modèles 3D glTF](2026-10-31_changement-majeur_modeles-gltf.md) |
+| 2026-10-31 | modification | [`Vertex` et `MeshData` déplacés dans `zentrix-core`](2026-10-31_modification_geometrie-dans-le-noyau.md) |
+| 2026-10-31 | changement-majeur | [Ombres portées (shadow mapping)](2026-10-31_changement-majeur_ombres-portees.md) |
+| 2026-10-31 | modification | [Rendu en deux passes, `FrameUniform` étendu](2026-10-31_modification_rendu-en-deux-passes.md) |
+| 2026-10-31 | changement-majeur | [Sauvegarde et chargement de scènes (RON)](2026-10-31_changement-majeur_sauvegarde-des-scenes.md) |
+| 2026-10-31 | changement-majeur | [Interface de debug egui et inspecteur](2026-10-31_changement-majeur_interface-egui-inspecteur.md) |
+| 2026-10-31 | modification | [Événements bruts, overlay de rendu, vue non-sRGB](2026-10-31_modification_evenements-overlay-vue-non-srgb.md) |
+| 2026-10-31 | changement-majeur | [Matériaux PBR (métal / rugosité)](2026-10-31_changement-majeur_materiaux-pbr.md) |
+| 2026-10-31 | changement-majeur | [Normal maps et tone mapping](2026-10-31_changement-majeur_normal-maps-et-tone-mapping.md) |
+| 2026-10-31 | modification | [`Vertex` à 60 octets, `params` dans `FrameUniform`](2026-10-31_modification_vertex-tangente-et-params.md) |
+| 2026-10-31 | changement-majeur | [Textures de matériau complètes et environnement (IBL)](2026-10-31_changement-majeur_textures-materiau-et-environnement.md) |
+| 2026-10-31 | modification | [`MaterialTextures`, bind groups réorganisés](2026-10-31_modification_material-textures-et-bind-groups.md) |
+| 2026-10-31 | changement-majeur | [Physique (rapier3d) : crate zentrix-physics](2026-10-31_changement-majeur_physique-rapier.md) |
+| 2026-11-01 | changement-majeur | [Audio spatialisé (kira) : crate zentrix-audio](2026-11-01_changement-majeur_audio-kira.md) |
+| 2026-11-01 | amelioration | [Physique : détection des chocs (`Physics::impacts`)](2026-11-01_amelioration_physique-detection-des-chocs.md) |
+| 2026-11-01 | changement-majeur | [Performance : culling, profileur, Tracy, plusieurs threads](2026-11-01_changement-majeur_performance-culling-profileur.md) |
+| 2026-11-01 | amelioration | [Propagation des transforms et liste des entités : 10 et 5 fois plus rapides](2026-11-01_amelioration_transforms-et-liste-des-entites.md) |
+| 2026-11-01 | modification | [Feuille de route : Phase 4, nouvelles pistes](2026-11-01_modification_feuille-de-route-phase-4.md) |
+| 2026-11-01 | changement-majeur | [Transparence : découpe, mélange, double face](2026-11-01_changement-majeur_transparence.md) |
+| 2026-11-01 | changement-majeur | [Post-traitement : image HDR, bloom, tone mapping, FXAA](2026-11-01_changement-majeur_post-traitement.md) |
+| 2026-11-01 | changement-majeur | [Ombres en cascade (CSM)](2026-11-01_changement-majeur_ombres-en-cascade.md) |
+| 2026-11-01 | changement-majeur | [Lampes et projecteurs (`PointLight`, `SpotLight`)](2026-11-01_changement-majeur_lampes-et-projecteurs.md) |
 
 > Les entrées du 2026-07-13 et du 2026-10-18 ont été reconstituées a posteriori à partir de
 > l'historique git (`git log --stat`).

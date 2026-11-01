@@ -13,3 +13,8 @@ zentrix-core = { workspace = true }
 zentrix-render = { workspace = true }
 hecs = { workspace = true }
 log = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }
+thiserror = { workspace = true }
+# Les zones mesurées par Tracy (sans effet sans la feature `tracy` de zentrix-app).
+profiling = { workspace = true }

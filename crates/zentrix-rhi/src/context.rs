@@ -31,6 +31,11 @@ pub struct Frame {
     /// La « vue » de la texture, c'est-à-dire la façon dont le GPU y accède.
     /// C'est elle qu'on donne aux passes de rendu comme cible.
     pub view: wgpu::TextureView,
+    /// La MÊME image, vue au format non-sRGB ([`GpuContext::overlay_format`]).
+    /// Pour les interfaces (egui) qui font elles-mêmes la conversion de
+    /// couleurs : sans cela, le GPU la ferait une seconde fois et
+    /// l'interface serait délavée.
+    pub overlay_view: wgpu::TextureView,
 }
 
 impl GpuContext {
@@ -122,7 +127,9 @@ impl GpuContext {
             // `Auto` : wgpu choisit l'espace colorimétrique standard (sRGB).
             // Les autres valeurs servent à l'affichage HDR, pour plus tard.
             color_space: wgpu::SurfaceColorSpace::Auto,
-            view_formats: vec![],
+            // On autorise une seconde « vue » de l'image, au format non-sRGB
+            // (même pixels, sans conversion de couleurs) : voir `Frame::overlay_view`.
+            view_formats: vec![format.remove_srgb_suffix()],
             // Nombre d'images que le CPU peut préparer en avance sur le GPU.
             desired_maximum_frame_latency: 2,
         };
@@ -142,6 +149,31 @@ impl GpuContext {
             config,
             adapter_info,
         })
+    }
+
+    /// La synchronisation verticale (V-Sync) est-elle active ?
+    pub fn vsync(&self) -> bool {
+        self.config.present_mode == wgpu::PresentMode::Fifo
+    }
+
+    /// Active ou coupe la synchronisation verticale.
+    ///
+    /// Avec la V-Sync, une image attend le rafraîchissement de l'écran : le
+    /// nombre d'images par seconde plafonne à la fréquence de l'écran (60 Hz
+    /// en général), et le temps d'une image ne dit plus rien du travail du
+    /// moteur. Sans elle, le moteur va aussi vite qu'il peut : utile pour
+    /// **mesurer**, au prix d'un éventuel déchirement de l'image.
+    ///
+    /// `AutoNoVsync` choisit le meilleur mode sans attente disponible
+    /// (`Immediate` ou `Mailbox`), et revient à `Fifo` s'il n'y en a aucun.
+    pub fn set_vsync(&mut self, on: bool) {
+        self.config.present_mode = if on {
+            wgpu::PresentMode::Fifo
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        self.surface.configure(&self.device, &self.config);
+        log::info!("V-Sync {}", if on { "activée" } else { "désactivée" });
     }
 
     /// Adapte la surface à la nouvelle taille de la fenêtre.
@@ -196,7 +228,15 @@ impl GpuContext {
         let view = texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        Ok(Some(Frame { texture, view }))
+        let overlay_view = texture.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.overlay_format()),
+            ..Default::default()
+        });
+        Ok(Some(Frame {
+            texture,
+            view,
+            overlay_view,
+        }))
     }
 
     /// Affiche à l'écran une image obtenue avec [`GpuContext::acquire_frame`].
@@ -209,6 +249,7 @@ impl GpuContext {
         // On détruit d'abord la vue (elle n'est plus utile), puis on remet la
         // texture à la queue, qui l'affichera une fois le GPU prêt.
         drop(frame.view);
+        drop(frame.overlay_view);
         self.queue.present(frame.texture);
     }
 
@@ -231,6 +272,12 @@ impl GpuContext {
     /// Le format des pixels de la surface (nécessaire pour créer les pipelines).
     pub fn surface_format(&self) -> wgpu::TextureFormat {
         self.config.format
+    }
+
+    /// Le format de [`Frame::overlay_view`] : celui de la surface, sans sRGB
+    /// (par exemple `Bgra8Unorm` au lieu de `Bgra8UnormSrgb`).
+    pub fn overlay_format(&self) -> wgpu::TextureFormat {
+        self.config.format.remove_srgb_suffix()
     }
 
     /// La taille actuelle de la surface en pixels : `(largeur, hauteur)`.

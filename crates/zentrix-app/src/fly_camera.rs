@@ -33,7 +33,7 @@ const MAX_PITCH: f32 = 89f32.to_radians();
 ///
 /// La position, elle, est dans le `Transform` de l'entité : le contrôleur ne
 /// stocke que ce qui lui est propre.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FlyCamera {
     /// Lacet en radians. Positif = tourné vers la droite (+X).
     pub yaw: f32,

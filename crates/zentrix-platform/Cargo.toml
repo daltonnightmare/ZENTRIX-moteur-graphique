@@ -10,3 +10,5 @@ winit = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
 zentrix-core = { workspace = true }
+# Les zones mesurées par Tracy (sans effet sans la feature `tracy` de zentrix-app).
+profiling = { workspace = true }

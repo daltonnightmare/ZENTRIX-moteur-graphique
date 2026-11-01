@@ -6,9 +6,18 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
-# Une seule dépendance : `glam`, la bibliothèque de maths 3D (vecteurs,
-# matrices, quaternions). Le noyau reste léger, sans GPU ni fenêtre, et
+# Deux petites dépendances : `glam`, la bibliothèque de maths 3D (vecteurs,
+# matrices, quaternions), et `bytemuck` (voir plus bas). Le noyau reste léger, sans GPU ni fenêtre, et
 # testable seul. On la ré-exporte (`zentrix_core::math`) pour que toutes les
 # crates partagent exactement les mêmes types mathématiques.
 [dependencies]
 glam = { workspace = true }
+# `bytemuck` : `Vertex` peut être vu comme des octets, prêt pour le GPU,
+# sans que le noyau dépende de wgpu.
+bytemuck = { workspace = true }
+# `serde` : `Transform` et `Color` peuvent être sauvegardés (scènes).
+serde = { workspace = true }
+
+# Pour les tests seulement : vérifier qu'un matériau incomplet se relit.
+[dev-dependencies]
+ron = { workspace = true }

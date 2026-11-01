@@ -1,0 +1,19 @@
+[package]
+name = "zentrix-audio"
+description = "L'audio de ZENTRIX : sons positionnés dans la scène (kira), auditeur, émetteurs, synthèse de sons."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+# L'audio lit les positions de la scène (auditeur, émetteurs). Ni la scène ni
+# la physique ne dépendent de lui : c'est l'application qui transforme les
+# chocs de la physique en sons.
+[dependencies]
+zentrix-core = { workspace = true }
+zentrix-scene = { workspace = true }
+kira = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+# Les zones mesurées par Tracy (sans effet sans la feature `tracy` de zentrix-app).
+profiling = { workspace = true }

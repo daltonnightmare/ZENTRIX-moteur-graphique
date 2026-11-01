@@ -1,7 +1,7 @@
 //! # zentrix-render
 //!
 //! Le rendu **haut niveau** : il sait *quoi* dessiner (des maillages vus par
-//! une caméra, texturés et éclairés) et s'appuie sur
+//! une caméra, texturés, éclairés et ombrés) et s'appuie sur
 //! `zentrix-rhi` pour *parler* au GPU.
 //!
 //! ## Utilisation
@@ -12,7 +12,8 @@
 //!  chaque image :  debug.clear();
 //!                  debug.axes(Vec3::ZERO, 1.0);           // lignes de debug (facultatif)
 //!                  renderer.render(&mut gpu, &camera, &[
-//!                      DrawCommand { mesh: cube, texture: Some(bois), transform: t.matrix() },
+//!                      DrawCommand { mesh: cube, textures: MaterialTextures::color(bois),
+//!                                    transform: t.matrix(), material: Material::DEFAULT },
 //!                  ], &debug)?;
 //! ```
 //!
@@ -42,19 +43,29 @@
 
 mod buffer;
 mod camera;
+mod cascades;
+mod culling;
 mod debug;
 mod depth;
+mod environment;
 mod lighting;
 mod mesh;
 mod pipeline;
+mod postprocess;
 mod renderer;
+mod shadow;
 mod texture;
 mod vertex;
 
 pub use camera::Camera;
+pub use cascades::{CASCADE_COUNT, Cascade, ShadowSettings};
 pub use debug::DebugLines;
-pub use lighting::Lighting;
-pub use mesh::{MeshData, MeshHandle};
-pub use renderer::{DrawCommand, Renderer};
-pub use texture::TextureHandle;
-pub use vertex::{InstanceRaw, Vertex};
+pub use environment::Sky;
+pub use lighting::{Lighting, LocalLight, SpotCone};
+pub use mesh::MeshHandle;
+pub use renderer::{DrawCommand, MAX_LOCAL_LIGHTS, RenderOverlay, RenderStats, Renderer};
+pub use texture::{MaterialTextures, TextureHandle};
+pub use vertex::InstanceRaw;
+// Les données de géométrie vivent dans le noyau ; on les ré-exporte pour que
+// `zentrix_render::MeshData` continue de fonctionner.
+pub use zentrix_core::{Material, MeshData, Vertex};

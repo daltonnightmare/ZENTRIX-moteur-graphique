@@ -24,7 +24,7 @@
 /// ```
 ///
 /// (Ce bloc de code est un « doc-test » : `cargo test` l'exécute vraiment !)
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Color {
     // `pub` devant chaque champ : on peut lire/écrire `couleur.r` depuis l'extérieur.
     pub r: f32,

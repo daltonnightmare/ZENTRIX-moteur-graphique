@@ -1,6 +1,6 @@
 [package]
 name = "zentrix-assets"
-description = "Chargement des ressources de ZENTRIX (images...). Ne dépend ni du GPU ni de la fenêtre."
+description = "Chargement des ressources de ZENTRIX (images, modèles glTF). Ne dépend ni du GPU ni de la fenêtre."
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -10,5 +10,6 @@ authors.workspace = true
 [dependencies]
 zentrix-core = { workspace = true }
 image = { workspace = true }
+gltf = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }

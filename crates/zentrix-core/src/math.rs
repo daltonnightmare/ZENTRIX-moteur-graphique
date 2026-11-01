@@ -19,7 +19,7 @@
 //! - Angles en **radians** (`std::f32::consts::PI` = 180°).
 //! - Profondeur NDC de 0 à 1 (convention wgpu / Vulkan / DirectX).
 
-pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
+pub use glam::{EulerRot, Mat4, Quat, Vec2, Vec3, Vec4};
 
 /// Les fonctions de caméra de glam (matrices de vue et de projection),
 /// rangées par convention : `camera::rh` (main droite) ou `camera::lh`.

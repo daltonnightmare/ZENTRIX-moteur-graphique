@@ -37,9 +37,11 @@
 
 mod components;
 mod hierarchy;
+mod serialization;
 
-pub use components::{Camera3d, DirectionalLight, MeshRenderer, Name};
+pub use components::{Camera3d, DirectionalLight, MeshRenderer, Name, PointLight, SpotLight};
 pub use hierarchy::{GlobalTransform, Parent};
+pub use serialization::{AssetNames, SceneError, SceneSerializer};
 
 // Ré-export : l'application utilise `zentrix_scene::hecs` et a la garantie
 // d'avoir la même version que la scène.
@@ -48,7 +50,7 @@ pub use hecs::Entity;
 
 use zentrix_core::math::{Mat4, Vec3};
 use zentrix_core::{Color, Transform};
-use zentrix_render::{Camera, DrawCommand, Lighting};
+use zentrix_render::{Camera, DrawCommand, Lighting, LocalLight, SpotCone};
 
 /// Le monde du jeu : toutes les entités et leurs composants.
 ///
@@ -113,6 +115,7 @@ impl Scene {
     /// entités et **avant** [`Scene::extract_draws`] / [`Scene::camera`].
     /// Sinon, le rendu montrerait les positions de l'image précédente.
     pub fn update_transforms(&mut self) {
+        profiling::scope!("Scene::update_transforms");
         hierarchy::propagate(&mut self.world, &mut self.propagation);
     }
 
@@ -141,6 +144,7 @@ impl Scene {
     /// `out` n'est pas vidé : l'appelant le vide (et garde sa mémoire d'une
     /// image à l'autre) ou y ajoute d'autres commandes.
     pub fn extract_draws(&self, out: &mut Vec<DrawCommand>) {
+        profiling::scope!("Scene::extract_draws");
         // Une requête ne visite QUE les entités qui ont tous les composants
         // demandés (sauf ceux marqués `Option`). Une caméra, sans
         // `MeshRenderer`, est ignorée ici.
@@ -152,8 +156,9 @@ impl Scene {
                 .iter()
                 .map(|(transform, global, renderer)| DrawCommand {
                     mesh: renderer.mesh,
-                    texture: renderer.texture,
+                    textures: renderer.textures,
                     transform: world_matrix(transform, global),
+                    material: renderer.material,
                 }),
         );
     }
@@ -198,6 +203,45 @@ impl Scene {
             color: light.color,
             intensity: light.intensity,
             ambient: self.ambient_light,
+        }
+    }
+}
+
+impl Scene {
+    /// Ajoute à `out` les lampes ([`PointLight`]) et projecteurs
+    /// ([`SpotLight`]) de la scène, placés et orientés par leur position
+    /// dans le monde. `out` n'est pas vidé (comme pour `extract_draws`).
+    pub fn extract_lights(&self, out: &mut Vec<LocalLight>) {
+        for (transform, global, light) in self
+            .world
+            .query::<(&Transform, Option<&GlobalTransform>, &PointLight)>()
+            .iter()
+        {
+            out.push(LocalLight {
+                position: world_matrix(transform, global).transform_point3(Vec3::ZERO),
+                color: light.color,
+                intensity: light.intensity,
+                range: light.range,
+                spot: None,
+            });
+        }
+        for (transform, global, light) in self
+            .world
+            .query::<(&Transform, Option<&GlobalTransform>, &SpotLight)>()
+            .iter()
+        {
+            let matrix = world_matrix(transform, global);
+            out.push(LocalLight {
+                position: matrix.transform_point3(Vec3::ZERO),
+                color: light.color,
+                intensity: light.intensity,
+                range: light.range,
+                spot: Some(SpotCone {
+                    direction: matrix.transform_vector3(Vec3::NEG_Z),
+                    inner_angle: light.inner_angle,
+                    outer_angle: light.outer_angle,
+                }),
+            });
         }
     }
 }
@@ -252,7 +296,7 @@ mod tests {
         scene.extract_draws(&mut draws);
         assert_eq!(draws.len(), 1);
         assert_eq!(draws[0].mesh, cube);
-        assert_eq!(draws[0].texture, Some(bois));
+        assert_eq!(draws[0].textures.base_color, Some(bois));
         assert_eq!(draws[0].transform.transform_point3(Vec3::ZERO), Vec3::X);
     }
 
@@ -339,6 +383,21 @@ mod tests {
     }
 
     #[test]
+    fn un_parent_sans_transform_ne_compte_pas() {
+        let mut scene = Scene::default();
+        let parent = scene.world.spawn((Transform::from_translation(Vec3::X),));
+        let enfant = scene
+            .world
+            .spawn((Transform::from_translation(Vec3::Y), Parent(parent)));
+        scene.update_transforms();
+        // Le parent garde son ancien `GlobalTransform`, mais n'a plus de
+        // `Transform` : l'enfant ne doit pas suivre cette valeur périmée.
+        scene.world.remove_one::<Transform>(parent).unwrap();
+        scene.update_transforms();
+        assert_eq!(position(&scene, enfant), Vec3::Y);
+    }
+
+    #[test]
     fn un_cycle_ne_bloque_pas() {
         let mut scene = Scene::default();
         let a = scene.world.spawn((Transform::IDENTITY,));
@@ -413,5 +472,31 @@ mod tests {
         assert_eq!(lighting.color, Color::RED);
         assert_eq!(lighting.intensity, 2.0);
         assert_eq!(lighting.ambient, scene.ambient_light);
+    }
+
+    #[test]
+    fn lampes_et_projecteurs() {
+        let mut scene = Scene::default();
+        scene.world.spawn((
+            Transform::from_translation(Vec3::new(1.0, 2.0, 3.0)),
+            PointLight::default(),
+        ));
+        // Un projecteur tourné vers le bas (le -Z de son repère pointe vers -Y).
+        scene.world.spawn((
+            Transform::IDENTITY.with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+            SpotLight::default(),
+        ));
+        scene.update_transforms();
+        let mut lights = Vec::new();
+        scene.extract_lights(&mut lights);
+        assert_eq!(lights.len(), 2);
+        assert_eq!(lights[0].position, Vec3::new(1.0, 2.0, 3.0));
+        assert!(lights[0].spot.is_none());
+        let cone = lights[1].spot.expect("un projecteur");
+        assert!(
+            cone.direction.abs_diff_eq(Vec3::NEG_Y, 1e-5),
+            "{}",
+            cone.direction
+        );
     }
 }

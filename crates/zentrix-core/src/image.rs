@@ -142,11 +142,72 @@ impl Image {
         }
         chain
     }
+
+    /// Fabrique une **normal map** à partir d'une carte de hauteurs.
+    ///
+    /// `height(x, y)` donne l'altitude du relief en chaque pixel (en
+    /// « pixels de hauteur » : 1 = autant qu'un pixel de large). L'image est
+    /// supposée **répétée** : les bords se raccordent (`x = -1` est lu en
+    /// `x = width - 1`). `strength` exagère (> 1) ou adoucit (< 1) le relief.
+    ///
+    /// Chaque pixel reçoit la normale de la surface `z = hauteur(x, y)`,
+    /// encodée en couleur : `composante × 0,5 + 0,5`. Une zone plate donne
+    /// (0, 0, 1), soit le bleu-violet (128, 128, 255) typique des normal maps.
+    /// Convention « OpenGL » (celle de glTF et de Blender) : le vert pointe
+    /// vers le **haut** de l'image.
+    ///
+    /// Attention : une normal map contient des **directions**, pas des
+    /// couleurs. Elle doit être envoyée au GPU sans conversion sRGB
+    /// (`Renderer::add_normal_map`).
+    pub fn normal_map_from_heights(
+        width: u32,
+        height: u32,
+        strength: f32,
+        height_at: impl Fn(u32, u32) -> f32,
+    ) -> Self {
+        let (w, h) = (width.max(1), height.max(1));
+        // Les hauteurs, calculées une seule fois.
+        let heights: Vec<f32> = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| height_at(x, y))
+            .collect();
+        let at = |x: u32, y: u32| heights[(y * w + x) as usize];
+        Self::from_fn(w, h, |x, y| {
+            // Pente par « différences centrées » : (droite - gauche) / 2.
+            let (left, right) = ((x + w - 1) % w, (x + 1) % w);
+            let (up, down) = ((y + h - 1) % h, (y + 1) % h);
+            let dx = (at(right, y) - at(left, y)) * 0.5 * strength;
+            // Les lignes descendent dans l'image : « vers le haut » = -y.
+            let dy_up = (at(x, up) - at(x, down)) * 0.5 * strength;
+            // La normale d'une pente penche à l'opposé de la montée.
+            let n = crate::math::Vec3::new(-dx, -dy_up, 1.0).normalize();
+            let encode = |c: f32| ((c * 0.5 + 0.5) * 255.0).round() as u8;
+            [encode(n.x), encode(n.y), encode(n.z), 255]
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normal_map_d_une_surface_plate_puis_d_une_pente() {
+        let plate = Image::normal_map_from_heights(4, 4, 1.0, |_, _| 3.0);
+        assert!(plate.pixels.chunks(4).all(|p| p == [128, 128, 255, 255]));
+
+        // Une rampe qui monte vers la droite : la normale penche vers la
+        // gauche (rouge < 128). Pas de pente verticale : vert = 128.
+        let rampe = Image::normal_map_from_heights(8, 1, 1.0, |x, _| x as f32 * 0.1);
+        let [r, g, b, _] = rampe.pixel(3, 0);
+        assert!(r < 128 && g == 128 && b > 200, "{r} {g} {b}");
+
+        // Une rampe qui monte vers le BAS de l'image : la normale penche vers
+        // le haut de l'image (vert > 128).
+        let rampe = Image::normal_map_from_heights(1, 8, 1.0, |_, y| y as f32 * 0.1);
+        let [_, g, _, _] = rampe.pixel(0, 3);
+        assert!(g > 128, "{g}");
+    }
 
     #[test]
     fn damier_alterne() {

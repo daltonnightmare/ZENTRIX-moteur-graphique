@@ -37,6 +37,10 @@ pub use runner::run;
 // On ré-exporte quelques types de winit dont l'application a besoin.
 // Ainsi `zentrix-app` n'a pas besoin de dépendre directement de winit
 // pour ces cas simples.
-pub use winit::event::MouseButton;
+pub use winit::event::{MouseButton, WindowEvent};
 pub use winit::keyboard::KeyCode;
 pub use winit::window::Window;
+
+// La crate winit elle-même, pour les bibliothèques qui en ont besoin
+// (egui-winit dans zentrix-ui) : elles utilisent ainsi la même version.
+pub use winit;

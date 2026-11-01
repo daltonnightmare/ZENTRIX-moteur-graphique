@@ -5,6 +5,9 @@
 //! ```text
 //!                        zentrix-app  (ce fichier + demo.rs + fly_camera.rs)
 //!          ┌──────────────┬────┴─────────┬───────────────┐
+//!          │  zentrix-physics  zentrix-audio            │
+//!          │    (rapier3d)       (kira)  │               │
+//!          │              ▼              │               │
 //!  zentrix-platform  zentrix-scene  zentrix-assets        │
 //!     (winit)         (hecs ECS)     (image)             │
 //!          │              └──────▶ zentrix-render ◀──────┘
@@ -30,13 +33,25 @@
 //! | `Espace` / `Ctrl`   | monter / descendre                            |
 //! | `Maj` (maintenue)   | aller 3 fois plus vite                        |
 //! | molette             | régler la vitesse                             |
-//! | `P`                 | mettre en pause l'animation des cubes         |
+//! | `P`                 | mettre en pause l'animation et la physique    |
 //! | `F1`                | afficher / masquer la grille, les axes et la direction de la lumière |
 //! | `F2`                | afficher / masquer les boîtes et les liens parent → enfant |
+//! | `F3`                | activer / désactiver les ombres portées       |
+//! | `F4`                | afficher / masquer l'inspecteur (interface egui) |
+//! | `F5` / `F9`         | sauvegarder / recharger la scène (assets/scenes/demo.ron) |
+//! | `F6`                | activer / désactiver le tone mapping          |
+//! | `F7`                | activer / désactiver l'environnement (ciel, reflets) |
+//! | `B`                 | lancer une balle droit devant                 |
+//! | `F8`                | couper / remettre le son                      |
+//! | `N`                 | ajouter / retirer le champ de stress (4 096 cubes) |
+//! | `L`                 | passer à la nuit (seules les lampes éclairent) / au jour |
+//! | clic droit (souris capturée) | pousser l'objet visé                  |
 //! | `Échap`             | libérer la souris, puis quitter               |
 
 mod demo;
 mod fly_camera;
+mod inspector;
+mod model;
 
 use std::sync::Arc;
 
@@ -44,19 +59,36 @@ use std::sync::Arc;
 // elle enrichit le message d'erreur pour savoir OÙ l'erreur s'est produite.
 use anyhow::Context;
 
+use zentrix_audio::{Audio, AudioListener, SoundEmitter};
 use zentrix_core::math::{Mat4, Quat, Vec3};
-use zentrix_core::{Color, Image};
+use zentrix_core::{Color, FrameProfiler, Image, Transform};
+use zentrix_physics::{Collider, Physics, RigidBody};
 use zentrix_platform::{
-    Application, Input, KeyCode, MouseButton, Window, WindowConfig, set_cursor_captured,
+    Application, Input, KeyCode, MouseButton, Window, WindowConfig, WindowEvent,
+    set_cursor_captured,
 };
-use zentrix_render::{DebugLines, DrawCommand, MeshData, Renderer};
+use zentrix_render::{DebugLines, DrawCommand, MaterialTextures, MeshData, Renderer};
 use zentrix_rhi::GpuContext;
-use zentrix_scene::Scene;
+use zentrix_scene::{AssetNames, DirectionalLight, Scene, SceneSerializer, hecs};
+use zentrix_ui::UiLayer;
 
-use crate::demo::{DemoAssets, GROUND_Y};
+use crate::demo::{Ball, DemoAssets, GROUND_Y, Spin, StressCube};
+use crate::fly_camera::FlyCamera;
+use crate::inspector::{Inspector, Perf, Toggles};
 
 /// Intervalle de mise à jour du compteur d'images par seconde (en secondes).
 const FPS_REFRESH: f32 = 0.5;
+
+/// L'écran du GPU (le « NDC ») : le pavé [-1, 1] × [-1, 1] × [0, 1]. Multiplié
+/// par l'inverse d'une matrice vue-projection, il redevient la zone du
+/// monde que cette matrice « voit ». `wire_box` dessine un cube de -0,5 à
+/// 0,5 : on l'étire d'abord à la taille de ce pavé.
+const NDC_BOX: Mat4 = Mat4::from_cols_array(&[
+    2.0, 0.0, 0.0, 0.0, //
+    0.0, 2.0, 0.0, 0.0, //
+    0.0, 0.0, 1.0, 0.0, //
+    0.0, 0.0, 0.5, 1.0, //
+]);
 
 /// Les objets qui n'existent qu'une fois la fenêtre créée.
 ///
@@ -66,6 +98,8 @@ struct GraphicsState {
     window: Arc<Window>,
     gpu: GpuContext,
     renderer: Renderer,
+    /// L'interface graphique (egui), dessinée par-dessus la scène.
+    ui: UiLayer,
     /// Début du titre de la fenêtre (nom du GPU), complété par les FPS.
     title: String,
 }
@@ -101,6 +135,22 @@ struct ZentrixApp {
     graphics: Option<GraphicsState>,
     /// Le monde du jeu : toutes les entités (caméra, sol, cubes...).
     scene: Scene,
+    /// Le monde physique, synchronisé avec la scène à chaque image.
+    physics: Physics,
+    /// Les ressources de la démo (pour créer des entités en cours de jeu :
+    /// les balles). `None` avant `on_start`.
+    assets: Option<DemoAssets>,
+    /// Numéro de la prochaine balle lancée.
+    next_ball: u32,
+    /// Le son. Muet tant que `on_start` ne l'a pas ouvert.
+    audio: Audio,
+    /// Le volume voulu (0 à 1), réglé dans l'inspecteur ; `F8` coupe le son.
+    volume: f32,
+    sound_off: bool,
+    /// L'annuaire « nom ↔ handle » des ressources, et ce qu'il faut pour
+    /// sauvegarder / recharger la scène.
+    names: AssetNames,
+    serializer: SceneSerializer,
     /// La souris est-elle capturée par la fenêtre (mode « regard ») ?
     mouse_captured: bool,
     /// Les commandes de dessin de l'image en cours. Gardé d'une image à
@@ -112,6 +162,17 @@ struct ZentrixApp {
     show_grid: bool,
     show_bounds: bool,
     fps: FpsCounter,
+    /// La dernière moyenne d'images par seconde (affichée par l'inspecteur).
+    last_fps: f32,
+    /// La fenêtre d'inspection de la scène (F4).
+    inspector: Inspector,
+    /// Le temps de chaque étape de l'image (affiché par l'inspecteur).
+    profiler: FrameProfiler,
+    /// Le champ de stress (touche `N`) est-il présent ?
+    stress: bool,
+    /// La nuit (touche `L`) : les réglages du jour, gardés pour les
+    /// rétablir (intensité du soleil, lumière ambiante, intensité du ciel).
+    day: Option<(f32, Color, f32)>,
     /// L'animation est-elle en pause ?
     paused: bool,
     /// Demande de fermeture (touche Échap).
@@ -123,12 +184,25 @@ impl ZentrixApp {
         Self {
             graphics: None,
             scene: Scene::default(),
+            physics: Physics::new(),
+            assets: None,
+            next_ball: 0,
+            audio: Audio::muted(),
+            volume: 0.8,
+            sound_off: false,
+            names: AssetNames::default(),
+            serializer: scene_serializer(),
             mouse_captured: false,
             draws: Vec::new(),
             debug: DebugLines::default(),
             show_grid: true,
             show_bounds: false,
             fps: FpsCounter::default(),
+            last_fps: 0.0,
+            inspector: Inspector::default(),
+            profiler: FrameProfiler::default(),
+            stress: false,
+            day: None,
             paused: false,
             quit_requested: false,
         }
@@ -138,6 +212,160 @@ impl ZentrixApp {
     fn set_mouse_captured(&mut self, captured: bool) {
         if let Some(g) = &self.graphics {
             self.mouse_captured = set_cursor_captured(&g.window, captured);
+        }
+    }
+
+    /// Un son pour chaque choc de la physique, d'autant plus fort que le
+    /// choc est violent. Seuls les 6 plus forts de l'image sont joués :
+    /// au-delà, on n'entendrait qu'un brouhaha.
+    fn play_impact_sounds(&mut self) {
+        let Some(sound) = self.audio.sound(demo::IMPACT_SOUND) else {
+            return;
+        };
+        let mut impacts: Vec<_> = self
+            .physics
+            .impacts()
+            .iter()
+            .filter(|i| i.speed > 1.0)
+            .copied()
+            .collect();
+        impacts.sort_by(|a, b| b.speed.total_cmp(&a.speed));
+        for (i, impact) in impacts.iter().take(6).enumerate() {
+            let volume = ((impact.speed - 1.0) / 9.0).clamp(0.05, 1.0);
+            // Un peu de variété : chaque choc n'a pas exactement la même
+            // hauteur (sinon l'oreille repère tout de suite la répétition).
+            let rate = 0.85 + 0.1 * ((self.next_ball as usize + i) % 4) as f32;
+            self.audio.play_at(sound, impact.position, volume, rate);
+        }
+    }
+
+    /// `L` : passe à la nuit (soleil, ciel et lumière ambiante presque
+    /// éteints : seules les lampes éclairent), ou revient au jour.
+    fn toggle_night(&mut self) {
+        let Some(g) = &mut self.graphics else { return };
+        let sun = self
+            .scene
+            .world
+            .query_mut::<&mut DirectionalLight>()
+            .into_iter()
+            .next();
+        let Some(sun) = sun else { return };
+        match self.day.take() {
+            // Retour au jour : les valeurs gardées.
+            Some((intensity, ambient, sky)) => {
+                sun.intensity = intensity;
+                self.scene.ambient_light = ambient;
+                g.renderer.environment_intensity = sky;
+                log::info!("Jour");
+            }
+            None => {
+                self.day = Some((
+                    sun.intensity,
+                    self.scene.ambient_light,
+                    g.renderer.environment_intensity,
+                ));
+                sun.intensity = 0.02;
+                self.scene.ambient_light = Color::rgb(0.01, 0.012, 0.02);
+                g.renderer.environment_intensity = 0.04;
+                log::info!("Nuit : seules les lampes éclairent");
+            }
+        }
+    }
+
+    /// `N` : ajoute ou retire le champ de stress.
+    fn toggle_stress_field(&mut self) {
+        if self.stress {
+            let removed = demo::remove_stress_field(&mut self.scene.world);
+            log::info!("Champ de stress retiré ({removed} cubes)");
+            self.stress = false;
+        } else if let Some(assets) = &self.assets {
+            demo::spawn_stress_field(&mut self.scene.world, assets);
+            log::info!(
+                "Champ de stress ajouté : {} entités",
+                self.scene.entity_count()
+            );
+            self.stress = true;
+        }
+    }
+
+    /// La position et l'orientation de la caméra pilotée.
+    fn camera_transform(&self) -> Option<Transform> {
+        self.scene
+            .world
+            .query::<hecs::With<&Transform, &FlyCamera>>()
+            .iter()
+            .next()
+            .copied()
+    }
+
+    /// F5 : écrit la scène dans `assets/scenes/demo.ron`.
+    fn save_scene(&self) {
+        let path = scene_path();
+        // `and_then` enchaîne les étapes : on ne continue que si la précédente a réussi.
+        let result = self
+            .serializer
+            .save(&self.scene, &self.names)
+            .map_err(anyhow::Error::from)
+            .and_then(|text| {
+                if let Some(dir) = path.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                std::fs::write(&path, text)?;
+                Ok(())
+            });
+        match result {
+            Ok(()) => log::info!(
+                "Scène sauvegardée : {} ({} entités)",
+                path.display(),
+                self.scene.entity_count()
+            ),
+            Err(error) => log::error!("Sauvegarde impossible : {error:#}"),
+        }
+    }
+
+    /// F9 : remplace la scène par celle de `assets/scenes/demo.ron`.
+    ///
+    /// On charge dans une scène NEUVE : si le fichier est invalide, la scène
+    /// actuelle reste intacte.
+    fn load_scene(&mut self) {
+        let path = scene_path();
+        let result = std::fs::read_to_string(&path)
+            .map_err(anyhow::Error::from)
+            .and_then(|text| {
+                let mut scene = Scene::default();
+                self.serializer.load(&mut scene, &text, &self.names)?;
+                Ok(scene)
+            });
+        match result {
+            Ok(scene) => {
+                self.scene = scene;
+                // Le fichier contient peut-être le champ de stress.
+                self.stress = self
+                    .scene
+                    .world
+                    .query::<&StressCube>()
+                    .iter()
+                    .next()
+                    .is_some();
+                // Les corps de l'ancienne scène n'ont plus d'entité : on
+                // repart de zéro (ils seront recréés depuis les composants).
+                self.physics.clear();
+                // Après les balles du fichier, pour garder des numéros uniques.
+                self.next_ball = self
+                    .scene
+                    .world
+                    .query::<&Ball>()
+                    .iter()
+                    .map(|b| b.serial + 1)
+                    .max()
+                    .unwrap_or(0);
+                log::info!(
+                    "Scène rechargée : {} ({} entités)",
+                    path.display(),
+                    self.scene.entity_count()
+                );
+            }
+            Err(error) => log::error!("Chargement impossible ({}) : {error:#}", path.display()),
         }
     }
 
@@ -158,6 +386,51 @@ impl ZentrixApp {
         if input.was_key_pressed(KeyCode::F2) {
             self.show_bounds = !self.show_bounds;
         }
+        if input.was_key_pressed(KeyCode::F5) {
+            self.save_scene();
+        }
+        if input.was_key_pressed(KeyCode::F9) {
+            self.load_scene();
+        }
+        if input.was_key_pressed(KeyCode::F3)
+            && let Some(g) = &mut self.graphics
+        {
+            g.renderer.shadows_enabled = !g.renderer.shadows_enabled;
+            log::info!(
+                "Ombres {}",
+                if g.renderer.shadows_enabled {
+                    "activées"
+                } else {
+                    "désactivées"
+                }
+            );
+        }
+        if input.was_key_pressed(KeyCode::F7)
+            && let Some(g) = &mut self.graphics
+        {
+            g.renderer.environment_enabled = !g.renderer.environment_enabled;
+            log::info!(
+                "Environnement {}",
+                if g.renderer.environment_enabled {
+                    "activé"
+                } else {
+                    "désactivé"
+                }
+            );
+        }
+        if input.was_key_pressed(KeyCode::F6)
+            && let Some(g) = &mut self.graphics
+        {
+            g.renderer.tone_mapping = !g.renderer.tone_mapping;
+            log::info!(
+                "Tone mapping {}",
+                if g.renderer.tone_mapping {
+                    "activé"
+                } else {
+                    "désactivé"
+                }
+            );
+        }
 
         // Échap libère d'abord la souris ; un second appui quitte.
         if input.was_key_pressed(KeyCode::Escape) {
@@ -168,8 +441,44 @@ impl ZentrixApp {
             }
         }
 
-        if input.was_button_pressed(MouseButton::Left) && !self.mouse_captured {
-            self.set_mouse_captured(true);
+        if input.was_key_pressed(KeyCode::F4) {
+            self.inspector.visible = !self.inspector.visible;
+        }
+        if input.was_key_pressed(KeyCode::KeyN) {
+            self.toggle_stress_field();
+        }
+        if input.was_key_pressed(KeyCode::KeyL) {
+            self.toggle_night();
+        }
+        if input.was_key_pressed(KeyCode::F8) {
+            self.sound_off = !self.sound_off;
+            log::info!("Son {}", if self.sound_off { "coupé" } else { "remis" });
+        }
+
+        // `B` (même place en AZERTY et QWERTY) : lancer une balle.
+        if input.was_key_pressed(KeyCode::KeyB)
+            && let (Some(assets), Some(eye)) = (&self.assets, self.camera_transform())
+        {
+            demo::launch_ball(&mut self.scene.world, assets, &eye, self.next_ball);
+            self.next_ball += 1;
+            if let Some(sound) = self.audio.sound(demo::LAUNCH_SOUND) {
+                let forward = eye.rotation * Vec3::NEG_Z;
+                self.audio
+                    .play_at(sound, eye.translation + forward, 0.6, 1.0);
+            }
+        }
+
+        // Clic droit en mode regard : un rayon part du centre de l'écran ; le
+        // premier objet touché reçoit un coup.
+        if self.mouse_captured
+            && input.was_button_pressed(MouseButton::Right)
+            && let Some(eye) = self.camera_transform()
+        {
+            let forward = eye.rotation * Vec3::NEG_Z;
+            if let Some(hit) = self.physics.cast_ray(eye.translation, forward, 100.0) {
+                self.physics
+                    .apply_impulse(hit.entity, forward * 4.0, hit.point);
+            }
         }
 
         // Alt+Tab pendant la capture : on rend la souris au système.
@@ -199,9 +508,32 @@ impl Application for ZentrixApp {
             ground: renderer.add_mesh(&gpu, &MeshData::plane([1.0; 3]).with_uv_scale(8.0)),
             // Les textures : une image chargée depuis le disque, une autre générée.
             crate_texture: renderer.add_texture(&gpu, &load_crate_image()),
+            lattice_texture: renderer.add_texture(&gpu, &demo::lattice_image(128, 8)),
             sun: renderer.add_mesh(&gpu, &MeshData::cube().with_color([1.0, 0.75, 0.2])),
             planet: renderer.add_mesh(&gpu, &MeshData::cube().with_color([0.25, 0.5, 1.0])),
             moon: renderer.add_mesh(&gpu, &MeshData::cube().with_color([0.8, 0.8, 0.85])),
+            sphere: renderer.add_mesh(&gpu, &MeshData::sphere(48, 24)),
+            // Les normal maps sont générées (voir demo.rs) et envoyées sans
+            // conversion sRGB.
+            ground_normal_map: renderer.add_normal_map(&gpu, &demo::tiles_normal_map(256, 2)),
+            dimples_normal_map: renderer
+                .add_normal_map(&gpu, &demo::dimples_normal_map(512, 256, 24, 12)),
+            // Couleur et émission en sRGB ; les autres sont des données.
+            panel: {
+                let images = demo::panel_images(256, 2);
+                MaterialTextures {
+                    base_color: Some(renderer.add_texture(&gpu, &images.base_color)),
+                    normal: Some(renderer.add_normal_map(&gpu, &images.normal)),
+                    metallic_roughness: Some(
+                        renderer.add_data_texture(&gpu, &images.metallic_roughness),
+                    ),
+                    occlusion: Some(renderer.add_data_texture(&gpu, &images.occlusion)),
+                    emissive: Some(renderer.add_texture(&gpu, &images.emissive)),
+                }
+            },
+            // Un modèle 3D glTF (généré par tools/generer_arbre.py).
+            tree: load_tree_model()
+                .map(|tree| model::upload(&mut renderer, &gpu, &tree, "arbre", &mut self.names)),
             ground_texture: renderer.add_texture(
                 &gpu,
                 &Image::checkerboard(
@@ -212,7 +544,34 @@ impl Application for ZentrixApp {
                 ),
             ),
         };
+        // Les noms sous lesquels les ressources apparaissent dans les scènes sauvegardées.
+        let names = &mut self.names;
+        names.add_mesh("cube", assets.cube);
+        names.add_mesh("cube_blanc", assets.white_cube);
+        names.add_mesh("sol", assets.ground);
+        names.add_mesh("soleil", assets.sun);
+        names.add_mesh("planete", assets.planet);
+        names.add_mesh("lune", assets.moon);
+        names.add_mesh("sphere", assets.sphere);
+        names.add_texture("dalles_relief", assets.ground_normal_map);
+        names.add_texture("alveoles_relief", assets.dimples_normal_map);
+        for (name, texture) in demo::panel_texture_names(&assets.panel) {
+            names.add_texture(name, texture);
+        }
+        names.add_texture("caisse", assets.crate_texture);
+        names.add_texture("grillage", assets.lattice_texture);
+        names.add_texture("damier", assets.ground_texture);
+
         demo::spawn(&mut self.scene, &assets);
+        self.assets = Some(assets);
+
+        // Le son : ouvert ici (et non dans `new`) pour ne pas occuper la
+        // carte son avant que la fenêtre existe. Les sons sont synthétisés.
+        let mut audio = Audio::new();
+        audio.add_sound(demo::IMPACT_SOUND, &zentrix_audio::synth::impact(170.0));
+        audio.add_sound(demo::LAUNCH_SOUND, &zentrix_audio::synth::whoosh());
+        audio.add_sound(demo::HUM_SOUND, &zentrix_audio::synth::hum());
+        self.audio = audio;
         log::info!("Scène créée : {} entités", self.scene.entity_count());
 
         let info = gpu.adapter_info();
@@ -222,12 +581,16 @@ impl Application for ZentrixApp {
             "Commandes : clic gauche = capturer la souris, ZQSD = se déplacer, Espace/Ctrl = monter/descendre"
         );
         log::info!("            Maj = vite, molette = vitesse, P = pause, Échap = libérer/quitter");
-        log::info!("            F1 = grille et axes, F2 = boîtes englobantes");
+        log::info!("            F1 = grille et axes, F2 = boîtes englobantes, F3 = ombres");
+        log::info!("            F4 = inspecteur, F5 = sauvegarder la scène, F9 = la recharger");
+        log::info!("            F6 = tone mapping, F7 = environnement (ciel et reflets)");
+        let ui = UiLayer::new(&window, &gpu);
 
         self.graphics = Some(GraphicsState {
             window,
             gpu,
             renderer,
+            ui,
             title,
         });
         Ok(())
@@ -241,8 +604,93 @@ impl Application for ZentrixApp {
         }
     }
 
+    fn on_window_event(&mut self, event: &WindowEvent) -> bool {
+        // Quand la souris pilote la caméra, l'interface ne reçoit rien :
+        // le curseur caché ne doit pas cliquer sur des boutons invisibles.
+        // Exception : les RELÂCHEMENTS de bouton, pour qu'egui ne croie
+        // jamais qu'un bouton est resté enfoncé.
+        let is_release = matches!(
+            event,
+            WindowEvent::MouseInput {
+                state: zentrix_platform::winit::event::ElementState::Released,
+                ..
+            }
+        );
+        if self.mouse_captured && !is_release {
+            return false;
+        }
+        match &mut self.graphics {
+            Some(g) => g.ui.on_window_event(&g.window, event),
+            None => false,
+        }
+    }
+
     fn on_update(&mut self, dt: f32, input: &Input) {
+        // Une nouvelle image commence : chaque `lap` mesure l'étape qui vient
+        // de se terminer.
+        self.profiler.begin_frame();
         self.handle_commands(input);
+
+        // --- L'interface : elle peut modifier la scène, avant les systèmes ----
+        let mut requests = inspector::Requests::default();
+        if let Some(g) = &mut self.graphics {
+            let mut vsync = g.gpu.vsync();
+            let perf = Perf {
+                fps: self.last_fps,
+                stats: g.renderer.stats(),
+                profiler: &self.profiler,
+                stress: self.stress,
+            };
+            // La fermeture capture des champs DIFFÉRENTS de `self` et de `g` :
+            // Rust accepte de les emprunter en même temps.
+            g.ui.run(&g.window, |ctx| {
+                let toggles = Toggles {
+                    show_grid: &mut self.show_grid,
+                    show_bounds: &mut self.show_bounds,
+                    shadows: &mut g.renderer.shadows_enabled,
+                    tone_mapping: &mut g.renderer.tone_mapping,
+                    bloom: &mut g.renderer.bloom_enabled,
+                    bloom_intensity: &mut g.renderer.bloom_intensity,
+                    bloom_threshold: &mut g.renderer.bloom_threshold,
+                    fxaa: &mut g.renderer.fxaa_enabled,
+                    show_cascades: &mut g.renderer.show_cascades,
+                    shadow_distance: &mut g.renderer.shadow_settings.distance,
+                    environment: &mut g.renderer.environment_enabled,
+                    environment_intensity: &mut g.renderer.environment_intensity,
+                    volume: &mut self.volume,
+                    sound_off: &mut self.sound_off,
+                    paused: &mut self.paused,
+                    culling: &mut g.renderer.culling_enabled,
+                    freeze_culling: &mut g.renderer.freeze_culling,
+                    multithreading: &mut g.renderer.multithreading,
+                    vsync: &mut vsync,
+                };
+                requests = self.inspector.show(ctx, &mut self.scene, toggles, perf);
+            });
+            // Changer de mode d'affichage reconfigure la surface : on ne le
+            // fait que si la case a vraiment changé.
+            if vsync != g.gpu.vsync() {
+                g.gpu.set_vsync(vsync);
+            }
+        }
+        // Un clic capture la souris... sauf s'il vise l'interface. On décide
+        // APRÈS que l'interface a traité l'image : avant, egui ne saurait pas
+        // encore que le curseur vient d'arriver sur un de ses panneaux.
+        let over_ui = self.graphics.as_ref().is_some_and(|g| g.ui.wants_pointer());
+        if input.was_button_pressed(MouseButton::Left) && !self.mouse_captured && !over_ui {
+            self.set_mouse_captured(true);
+        }
+
+        if requests.save {
+            self.save_scene();
+        }
+        if requests.load {
+            self.load_scene();
+        }
+        if requests.toggle_stress {
+            self.toggle_stress_field();
+        }
+        self.profiler.lap("interface");
 
         // --- Les systèmes : la logique du jeu, entité par entité ---------------
         if !self.paused {
@@ -251,19 +699,38 @@ impl Application for ZentrixApp {
         }
         // La souris ne fait tourner la vue que si elle est capturée.
         demo::fly_camera_system(&mut self.scene.world, input, dt, self.mouse_captured);
+        demo::cleanup_system(&mut self.scene.world);
+        self.profiler.lap("systèmes");
+
+        // La physique, APRÈS les systèmes qui déplacent les objets cinématiques
+        // (les cubes qui tournent) et AVANT le calcul des positions dans le monde.
+        if !self.paused {
+            self.physics.step(&mut self.scene, dt);
+            self.play_impact_sounds();
+        }
+        self.profiler.lap("physique");
 
         // Les positions dans le monde, une fois TOUS les déplacements faits.
         self.scene.update_transforms();
+        self.profiler.lap("transforms");
+
+        // Le son suit la scène : l'oreille (la caméra) et les émetteurs.
+        self.audio
+            .set_master_volume(if self.sound_off { 0.0 } else { self.volume });
+        self.audio.update(&self.scene);
+        self.profiler.lap("audio");
 
         // --- L'extraction : ce que le rendu doit dessiner ----------------------
         // Le Renderer ne connaît pas l'ECS : la scène lui prépare des listes simples.
         self.draws.clear();
         self.scene.extract_draws(&mut self.draws);
         self.debug.clear();
+        self.profiler.lap("extraction");
 
         let Some(g) = &self.graphics else { return };
 
         if let Some(fps) = self.fps.tick(dt) {
+            self.last_fps = fps;
             g.window.set_title(&format!(
                 "{} — {fps:.0} FPS — clic : piloter, Échap : libérer",
                 g.title
@@ -292,9 +759,60 @@ impl Application for ZentrixApp {
             );
         }
 
+        // Les boîtes couvertes par les tranches d'ombre, de la couleur dont
+        // le shader teinte chaque tranche. Dans l'espace « vu depuis la
+        // lumière » (NDC), chacune est le pavé [-1, 1] × [-1, 1] × [0, 1] ;
+        // l'inverse de sa matrice le replace dans le monde (voir `NDC_BOX`).
+        if g.renderer.show_cascades && g.renderer.shadows_enabled {
+            let colors = [
+                Color::rgb(1.0, 0.3, 0.3),
+                Color::rgb(0.3, 1.0, 0.3),
+                Color::rgb(0.3, 0.4, 1.0),
+            ];
+            for (cascade, color) in g.renderer.cascades().iter().zip(colors) {
+                self.debug
+                    .wire_box(cascade.view_projection.inverse() * NDC_BOX, color);
+            }
+        }
+
+        // La pyramide de vision figée (inspecteur, « Figer ») : le même
+        // pavé, replacé dans le monde par l'inverse de la matrice de la
+        // caméra. La perspective en fait une pyramide tronquée.
+        if let Some(frozen) = g.renderer.frozen_view_projection() {
+            self.debug
+                .wire_box(frozen.inverse() * NDC_BOX, Color::rgb(1.0, 0.6, 0.1));
+        }
+
         if self.show_bounds {
             demo::bounds_system(&self.scene.world, &mut self.debug);
+            self.physics.debug_draw(&mut self.debug);
+            // Les lampes : un petit cube de leur couleur ; les projecteurs,
+            // en plus, un trait dans la direction éclairée.
+            let mut lights = Vec::new();
+            self.scene.extract_lights(&mut lights);
+            for light in &lights {
+                let marker = Mat4::from_scale_rotation_translation(
+                    Vec3::splat(0.25),
+                    Quat::IDENTITY,
+                    light.position,
+                );
+                self.debug.wire_box(marker, light.color);
+                if let Some(cone) = light.spot {
+                    let end = light.position + cone.direction.normalize_or_zero() * 2.0;
+                    self.debug.line(light.position, end, light.color);
+                }
+            }
         }
+
+        // L'entité sélectionnée dans l'inspecteur, entourée en cyan.
+        if let Some(outline) = self
+            .inspector
+            .selected()
+            .and_then(|e| inspector::selection_outline(&self.scene, e))
+        {
+            self.debug.wire_box(outline, Color::rgb(0.3, 1.0, 1.0));
+        }
+        self.profiler.lap("lignes de debug");
     }
 
     fn should_exit(&self) -> bool {
@@ -307,11 +825,26 @@ impl Application for ZentrixApp {
             // de ne rien afficher.
             let camera = self.scene.camera().unwrap_or_default();
             g.renderer.lighting = self.scene.lighting();
-            g.renderer
-                .render(&mut g.gpu, &camera, &self.draws, &self.debug)?;
+            // Les lampes et projecteurs : la liste est refaite à chaque image
+            // (`clear` garde sa mémoire).
+            g.renderer.lights.clear();
+            self.scene.extract_lights(&mut g.renderer.lights);
+            // L'interface est dessinée en dernier, par-dessus la scène.
+            g.renderer.render_with_overlay(
+                &mut g.gpu,
+                &camera,
+                &self.draws,
+                &self.debug,
+                Some(&mut g.ui),
+            )?;
             // `pre_present_notify` n'est pas obligatoire, mais aide winit à
             // mieux planifier les images sur certaines plateformes (Wayland).
             g.window.pre_present_notify();
+            // Le rendu a mesuré lui-même le temps passé à attendre une image
+            // libre (la V-Sync) : ce n'est pas du travail, on le range à part.
+            self.profiler.lap("rendu");
+            self.profiler
+                .transfer("rendu", "attente de l'écran", g.renderer.stats().wait_time);
         }
         Ok(())
     }
@@ -319,6 +852,37 @@ impl Application for ZentrixApp {
     fn on_exit(&mut self) {
         log::info!("Arrêt de ZENTRIX");
     }
+}
+
+/// Le fichier de sauvegarde de la démo.
+fn scene_path() -> std::path::PathBuf {
+    zentrix_assets::asset_dir().join("scenes/demo.ron")
+}
+
+/// Le sérialiseur de la démo : les composants du moteur, plus ceux du jeu.
+fn scene_serializer() -> SceneSerializer {
+    let mut serializer = SceneSerializer::default();
+    serializer
+        .register::<Spin>("Spin")
+        .register::<FlyCamera>("FlyCamera")
+        .register::<Ball>("Ball")
+        .register::<StressCube>("StressCube")
+        .register::<RigidBody>("RigidBody")
+        .register::<Collider>("Collider")
+        .register::<AudioListener>("AudioListener")
+        .register::<SoundEmitter>("SoundEmitter");
+    serializer
+}
+
+/// Charge le modèle d'arbre `assets/models/arbre.glb`. En cas d'échec, la
+/// démo continue sans arbres (`None`).
+fn load_tree_model() -> Option<zentrix_assets::Model> {
+    let path = zentrix_assets::asset_dir().join("models/arbre.glb");
+    // `.inspect_err` : agir sur l'erreur (l'afficher) sans la consommer ;
+    // `.ok()` : `Result` → `Option` (l'erreur est abandonnée).
+    zentrix_assets::load_gltf(&path)
+        .inspect_err(|error| log::warn!("{error} — pas d'arbres dans la démo"))
+        .ok()
 }
 
 /// Charge la texture des caisses depuis `assets/textures/caisse.png`.

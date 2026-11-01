@@ -1,0 +1,22 @@
+[package]
+name = "zentrix-physics"
+description = "La physique de ZENTRIX : corps rigides et collisions (rapier3d), synchronisés avec la scène."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+# La physique lit et écrit les `Transform` de la scène ; elle dessine aussi
+# ses formes avec les lignes de debug du rendu. Ni la scène ni le rendu ne
+# dépendent d'elle.
+[dependencies]
+zentrix-core = { workspace = true }
+zentrix-render = { workspace = true }
+zentrix-scene = { workspace = true }
+rapier3d = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+# Les zones mesurées par Tracy (sans effet sans la feature `tracy` de zentrix-app).
+profiling = { workspace = true }
+
+[dev-dependencies]
+ron = { workspace = true }

@@ -1,0 +1,18 @@
+[package]
+name = "zentrix-ui"
+description = "Interface graphique de debug de ZENTRIX : intégration d'egui (événements winit, rendu wgpu)."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+# zentrix-ui relie egui à la plateforme (événements), au GPU et au rendu
+# (via le trait RenderOverlay). Le rendu, lui, ne connaît pas egui.
+[dependencies]
+zentrix-platform = { workspace = true }
+zentrix-rhi = { workspace = true }
+zentrix-render = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }
+# Les zones mesurées par Tracy (sans effet sans la feature `tracy` de zentrix-app).
+profiling = { workspace = true }

@@ -1,19 +1,27 @@
 //! # zentrix-assets
 //!
 //! Le chargement des **ressources** (« assets ») : tout ce qui vient de
-//! fichiers sur le disque. Pour l'instant : les images (PNG, JPEG).
+//! fichiers sur le disque : les images (PNG, JPEG) et les modèles 3D (glTF).
 //!
 //! Cette crate ne connaît **ni le GPU, ni la fenêtre** : elle transforme des
-//! octets de fichier en données du noyau ([`zentrix_core::Image`]). C'est
-//! ensuite `zentrix-render` qui les envoie au GPU.
+//! octets de fichier en données du noyau ([`zentrix_core::Image`],
+//! [`zentrix_core::MeshData`]). C'est ensuite `zentrix-render` qui les envoie
+//! au GPU.
 //!
 //! ```text
 //!   caisse.png ──▶ zentrix-assets ──▶ Image (pixels RGBA) ──▶ zentrix-render ──▶ texture GPU
 //!                  load_image()        zentrix-core           add_texture()
+//!
+//!   arbre.glb  ──▶ zentrix-assets ──▶ Model (MeshData + Image + transformations)
+//!                  load_gltf()          └─▶ add_mesh / add_texture, puis des entités
 //! ```
 //!
-//! Prévu plus tard (voir la feuille de route) : modèles 3D (glTF), sons,
-//! chargement en arrière-plan, rechargement à chaud.
+//! Prévu plus tard (voir la feuille de route) : sons, chargement en
+//! arrière-plan, rechargement à chaud.
+
+mod model;
+
+pub use model::{Model, ModelPart, PartTextures, decode_gltf, load_gltf};
 
 use std::path::{Path, PathBuf};
 
@@ -36,6 +44,11 @@ pub enum AssetError {
         path: PathBuf,
         source: image::ImageError,
     },
+
+    /// Le modèle glTF n'a pas pu être chargé (fichier absent, JSON invalide,
+    /// buffer ou image manquant...).
+    #[error("impossible de charger le modèle « {path} » : {source}")]
+    Gltf { path: PathBuf, source: gltf::Error },
 }
 
 /// Le dossier qui contient les ressources du jeu.

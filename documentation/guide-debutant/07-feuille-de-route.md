@@ -13,8 +13,8 @@ Ce chapitre relie la base actuelle aux documents de conception : [GAME_ENGINE_DE
 | **Phase 0** — Vision, périmètre | ✅ Rust + wgpu, bureau d'abord, workspace multi-crates |
 | **Phase 1** — Fondation et boucle d'exécution | ✅ fenêtre, événements, delta time, FPS, logs, arrêt propre · ⏳ fichier de configuration |
 | **Phase 2** — Noyau de rendu | ✅ **terminée** : GPU + surface + pipeline · maillages, uniforms, caméra 3D, depth buffer, instanciation · entrées + caméra libre · textures · rendu de debug |
-| **Phase 3** — Scène et ECS | 🟡 **en cours** : `zentrix-scene` (hecs), composants `Transform` / `MeshRenderer` / `Camera3d` / `Name`, extraction vers le rendu ✅ · hiérarchie (`Parent`, `GlobalTransform`) ✅ · sérialisation ⏳ |
-| Phase 4+ — éclairage, modèles 3D, audio, physique... | 🟡 éclairage simple (Lambert + Blinn-Phong) ✅ · modèles 3D, ombres, audio, physique ⏳ |
+| **Phase 3** — Scène et ECS | 🟡 **en cours** : `zentrix-scene` (hecs), composants `Transform` / `MeshRenderer` / `Camera3d` / `Name`, extraction vers le rendu ✅ · hiérarchie (`Parent`, `GlobalTransform`) ✅ · sauvegarde / chargement RON ✅ |
+| Phase 4+ — éclairage, modèles 3D, audio, physique... | 🟡 éclairage simple (Lambert + Blinn-Phong) ✅ puis PBR complet (Cook-Torrance, textures, environnement) ✅ · modèles 3D glTF ✅ · ombres portées ✅ · physique ✅ · audio ✅ |
 
 ---
 
@@ -137,11 +137,84 @@ Chaque étape produit quelque chose de **visible**, ce qui permet de valider qu'
 
 **Démo** : des cubes qui ont une face éclairée et une face dans l'ombre.
 
-### Étape K — Modèles 3D (glTF) ⭐⭐⭐⭐ ← prochaine étape
+### Étape K — Modèles 3D (glTF) ⭐⭐⭐⭐ ✅
 
 - Dans `zentrix-assets` : charger des fichiers `.gltf` / `.glb` (crate `gltf`) en `MeshData` + textures.
 
 **Démo** : un modèle 3D téléchargé (licence libre) au milieu de la scène.
+
+> ✅ Réalisée : `load_gltf` dans [model.rs](../../crates/zentrix-assets/src/model.rs). Pour que
+> `zentrix-assets` ne dépende que du noyau, `Vertex` et `MeshData` ont été déplacés dans
+> `zentrix-core` (ré-exportés par `zentrix-render`). Le modèle de la démo n'est pas téléchargé
+> mais **généré** par [tools/generer_arbre.py](../../tools/generer_arbre.py) (pas de question de
+> licence) : 7 arbres sont placés autour des cubes.
+
+### Étape L — Ombres portées (shadow mapping) ⭐⭐⭐⭐ ✅
+
+> ✅ Réalisée : [shadow.rs](../../crates/zentrix-render/src/shadow.rs) (shadow map 2048²,
+> sampler de comparaison), `ShadowArea::light_view_projection` dans
+> [lighting.rs](../../crates/zentrix-render/src/lighting.rs) (projection orthographique),
+> passe d'ombre avec biais de profondeur ([shadow.wgsl](../../crates/zentrix-render/src/shaders/shadow.wgsl)),
+> PCF 3×3 dans `mesh.wgsl`. `F3` active / désactive les ombres.
+
+- Une première passe dessine la scène **vue depuis la lumière** dans une texture de profondeur
+  (la *shadow map*).
+- Dans `mesh.wgsl`, chaque pixel compare sa distance à la lumière avec la shadow map : plus
+  loin = dans l'ombre. Filtrage PCF pour adoucir les bords.
+
+**Démo** : les cubes et les arbres projettent leur ombre sur le sol, qui tourne avec le soleil.
+
+### Étape M — Sauvegarde et chargement de scènes ⭐⭐⭐ ✅
+
+- Sérialiser les entités et leurs composants (crate `serde` + format RON ou JSON).
+- Recharger une scène au démarrage : premier pas vers un éditeur.
+
+> ✅ Réalisée : [serialization.rs](../../crates/zentrix-scene/src/serialization.rs). Les handles
+> sont remplacés par des noms (`AssetNames`), les liens `Parent` sont renumérotés, et le jeu
+> déclare ses propres composants avec `SceneSerializer::register`. Chargement « tout ou
+> rien ». Dans la démo : `F5` / `F9`.
+
+## Et ensuite ? Pistes pour la suite
+
+La Phase 3 (scène) est bien avancée. Pistes possibles, à choisir selon le projet :
+
+| Piste | Contenu | Difficulté |
+|-------|---------|------------|
+| **Interface de debug** ✅ | `egui` dans la fenêtre : FPS, liste des entités, édition des `Transform` en direct (premier éditeur) — réalisée : crate [zentrix-ui](../../crates/zentrix-ui/src/lib.rs), [inspecteur](../../crates/zentrix-app/src/inspector.rs) (`F4`) | ⭐⭐⭐ |
+| **Matériaux PBR** ✅ | métal / rugosité, normal maps, lumière plus réaliste (glTF fournit déjà ces données) — réalisé : `Material` (couleur de base, métal, rugosité) par instance, Cook-Torrance dans [mesh.wgsl](../../crates/zentrix-render/src/shaders/mesh.wgsl), facteurs glTF, vitrine de sphères, réglage dans l'inspecteur ; normal maps (tangentes dans `Vertex`, `add_normal_map`, glTF `normalTexture`), tone mapping Khronos PBR Neutral (`F6`) ; textures métal/rugosité, occlusion, émission (`MaterialTextures`) ; environnement (IBL) : ciel procédural précalculé en cube maps, reflets et lumière diffuse, ciel en arrière-plan (`F7`). Pistes suivantes : ciel HDR chargé depuis une image, BRDF LUT exacte, transparence | ⭐⭐⭐⭐ |
+| **Audio** ✅ | crate `kira` ou `rodio` : sons positionnés dans la scène — réalisé : crate [zentrix-audio](../../crates/zentrix-audio/src/lib.rs) (kira 0.12 : `AudioListener`, `SoundEmitter` en boucle, `play_at` ponctuel, sons WAV/OGG ou synthétisés, mode muet sans carte son) ; chocs de la physique (`Physics::impacts`) → sons d'impact ; démo : chocs, lancers, néons qui bourdonnent, volume et `F8`. Pistes suivantes : musique en streaming, effets (réverbération), effet Doppler | ⭐⭐ |
+| **Physique** ✅ | crate `rapier3d` : gravité, collisions, objets qui tombent — réalisée : crate [zentrix-physics](../../crates/zentrix-physics/src/lib.rs) (composants `RigidBody` / `Collider`, pas fixe de 1/60 s, corps dynamiques / fixes / cinématiques, lancer de rayon, impulsions, dessin des formes avec `F2`) ; démo : pyramide de caisses, balles (`B`), clic droit pour pousser. Pistes suivantes : événements de collision, articulations, contrôleur de personnage, interpolation | ⭐⭐⭐ |
+| **Performance** ✅ | culling (ne pas dessiner hors de l'écran), mesures avec `tracy`, plusieurs threads — réalisée : culling par la pyramide de vision (caméra) et par la zone d'ombre (lumière), sur plusieurs threads au-delà de 1 024 objets ([culling.rs](../../crates/zentrix-render/src/culling.rs)) ; profileur d'image intégré ([profiler.rs](../../crates/zentrix-core/src/profiler.rs)) et panneau « Performance » de l'inspecteur ; zones Tracy (`--features tracy`) ; V-Sync désactivable ; champ de stress de 4 096 cubes (`N`). Pistes suivantes : mesures GPU (*timestamp queries*), culling sur GPU, niveaux de détail (LOD), physique sur plusieurs threads | ⭐⭐⭐⭐ |
+
+## Phase 4 — Nouvelles pistes
+
+Toutes les pistes ci-dessus sont réalisées. Les suivantes sont regroupées par ce qu'elles
+apportent, dans l'ordre conseillé à l'intérieur de chaque groupe.
+
+### Ce qui se voit à l'écran
+
+| Piste | Contenu | Difficulté |
+|-------|---------|------------|
+| **Transparence** ✅ | Verre, eau, feuillage découpé : `alpha` du matériau, textures avec canal alpha, *alpha test* (découpe) et *alpha blending* (mélange). Les objets transparents sont dessinés **après** les opaques, triés de l'arrière vers l'avant, sans écrire dans le depth buffer — réalisée : `AlphaMode` (opaque, découpe, mélange) et `double_sided` dans `Material` (lus depuis glTF), alpha prémultiplié (le verre garde ses reflets), 4 variantes du pipeline des maillages, tri par distance ([culling.rs](../../crates/zentrix-render/src/culling.rs)), ombres trouées pour la découpe ; démo : vitre, cubes de verre, lanterne grillagée. Pistes suivantes : transparence indépendante de l'ordre (OIT), réfraction, ombres colorées du verre | ⭐⭐ |
+| **Post-traitement** ✅ | Dessiner d'abord dans une texture HDR, puis des passes plein écran : **bloom** (les zones très lumineuses « bavent »), **anti-aliasing** (FXAA ou MSAA : bords sans escaliers), tone mapping déplacé dans cette passe — réalisé : image HDR `Rgba16Float`, bloom à la Call of Duty (seuil doux, 6 niveaux de réduction puis remontée additive), tone mapping et FXAA en passes finales ([postprocess.rs](../../crates/zentrix-render/src/postprocess.rs), [post.wgsl](../../crates/zentrix-render/src/shaders/post.wgsl)) ; réglages dans l'inspecteur. Pistes suivantes : MSAA, exposition automatique, profondeur de champ, flou de mouvement, SSAO | ⭐⭐⭐ |
+| **Ombres en cascade (CSM)** ✅ | Plusieurs shadow maps de plus en plus grandes selon la distance : ombres nettes près de la caméra, présentes jusqu'au loin (aujourd'hui, une seule zone de 23 m) — réalisées : 3 tranches jusqu'à 50 m ([cascades.rs](../../crates/zentrix-render/src/cascades.rs)), sphères englobantes et calage sur les texels contre le scintillement, fondu entre tranches, décalage selon la normale, debug « Tranches ». Pistes suivantes : culling par tranche, ombres douces (PCSS), mise à jour moins fréquente des tranches lointaines | ⭐⭐⭐ |
+| **Lumières ponctuelles et projecteurs** ✅ | Lampes et spots colorés, avec atténuation selon la distance ; plusieurs lumières par image (storage buffer) ; les néons éclairent vraiment la scène — réalisées : composants `PointLight` et `SpotLight` (sauvegardés), `LocalLight` côté rendu, jusqu'à 256 lumières par image dans un storage buffer, atténuation en 1/d² avec fenêtre, cône à bord doux, culling des lumières hors de la vue ; démo : flamme de la lanterne, néons, manège de lampes colorées, projecteur, touche `L` (nuit). Pistes suivantes : ombres des lampes (cube maps), *clustered shading* pour des centaines de lampes, lumières surfaciques | ⭐⭐⭐ |
+
+### Ce qui rend le moteur « jouable »
+
+| Piste | Contenu | Difficulté |
+|-------|---------|------------|
+| **Contrôleur de personnage** | Marcher sur le sol, sauter, monter des marches, glisser le long des murs (`KinematicCharacterController` de rapier), caméra à la première ou à la troisième personne | ⭐⭐ |
+| **Petit gameplay** | Un mini-jeu dans le moteur (ramasser des objets, toucher des cibles avec les balles, score à l'écran) : le meilleur test de l'API du moteur | ⭐⭐ |
+| **Animation de modèles** | Animations glTF : images clés (position, rotation), puis squelette et *skinning* pour des personnages | ⭐⭐⭐⭐ |
+
+### Ce qui en fait un vrai outil
+
+| Piste | Contenu | Difficulté |
+|-------|---------|------------|
+| **Éditeur** | Sélection par clic dans la scène (lancer de rayon), *gizmos* pour déplacer / tourner / agrandir à la souris, création et suppression d'entités, annuler / refaire (Ctrl+Z) | ⭐⭐⭐ |
+| **Rechargement à chaud** | Modifier un shader `.wgsl`, une texture ou une scène et voir le résultat sans relancer (surveillance des fichiers avec la crate `notify`) | ⭐⭐ |
+| **Mesures GPU** | *Timestamp queries* : le temps de chaque passe sur la carte graphique, affiché à côté du profileur CPU | ⭐⭐ |
 
 ---
 

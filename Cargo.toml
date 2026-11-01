@@ -25,6 +25,9 @@ members = [
     "crates/zentrix-render",    # rendu haut niveau (pipelines, shaders) — utilise le RHI
     "crates/zentrix-assets",    # chargement des fichiers (images...)    — sans GPU
     "crates/zentrix-scene",     # la scène : entités et composants (ECS)
+    "crates/zentrix-ui",        # interface graphique de debug (egui)
+    "crates/zentrix-physics",   # physique : corps rigides, collisions (rapier3d)
+    "crates/zentrix-audio",     # son : bruitages positionnés dans la scène (kira)
     "crates/zentrix-app",       # l'exécutable qui assemble tout
 ]
 
@@ -45,6 +48,9 @@ zentrix-rhi      = { path = "crates/zentrix-rhi" }
 zentrix-render   = { path = "crates/zentrix-render" }
 zentrix-assets   = { path = "crates/zentrix-assets" }
 zentrix-scene    = { path = "crates/zentrix-scene" }
+zentrix-ui       = { path = "crates/zentrix-ui" }
+zentrix-physics  = { path = "crates/zentrix-physics" }
+zentrix-audio    = { path = "crates/zentrix-audio" }
 
 # --- Fenêtre et événements ---
 winit = "0.30"          # crée la fenêtre, reçoit clavier/souris/redimensionnement
@@ -59,12 +65,41 @@ bytemuck = { version = "1", features = ["derive"] }  # convertit nos structs en 
 # Décodage d'images. `default-features = false` : on n'active que les formats
 # utiles (PNG, JPEG) au lieu d'une vingtaine, ce qui accélère la compilation.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+gltf = { version = "1.4", default-features = false, features = ["import", "utils", "names"] } # modèles 3D glTF 2.0 (.gltf, .glb)
+
+# --- Interface graphique (egui) ---
+# Les trois crates doivent avoir la même version, et egui-wgpu / egui-winit
+# doivent utiliser EXACTEMENT nos versions de wgpu (30) et winit (0.30).
+egui = { version = "0.37", features = ["default_fonts"] } # `default_fonts` : les polices intégrées (sinon, aucun texte)
+egui-wgpu = { version = "0.37", default-features = false }
+egui-winit = { version = "0.37", default-features = false, features = ["clipboard", "wayland", "x11"] }
+
+# --- Sérialisation (sauvegarde des scènes) ---
+serde = { version = "1", features = ["derive"] } # `#[derive(Serialize, Deserialize)]` : convertir nos types en texte et inversement
+ron = "0.12"            # format RON (Rusty Object Notation) : lisible, proche de la syntaxe Rust
 
 # --- ECS (Entity Component System) ---
 hecs = "0.11"           # ECS minimaliste : un « World » d'entités, des composants, des requêtes
 
+# --- Physique ---
+# rapier utilise sa propre version de glam (0.33) : zentrix-physics convertit
+# les vecteurs à la frontière (voir crates/zentrix-physics/src/lib.rs).
+rapier3d = "0.36"       # moteur physique : corps rigides, collisions, rayons
+
+# --- Audio ---
+# Sans les options par défaut : seulement la sortie son (cpal) et les formats
+# WAV et OGG, au lieu d'une dizaine de décodeurs. kira utilise la même
+# version de glam que ZENTRIX : aucune conversion n'est nécessaire.
+kira = { version = "0.12", default-features = false, features = ["cpal", "wav", "ogg", "vorbis"] }
+
+# --- Performance ---
+rayon = "1"             # partager un travail entre tous les cœurs du processeur
+# Mesures pour le profileur Tracy. Les macros `profiling::scope!` ne font
+# RIEN tant que la feature `tracy` de zentrix-app n'est pas activée.
+profiling = "1"
+
 # --- Mathématiques ---
-glam = { version = "0.34", features = ["bytemuck"] } # vecteurs / matrices / quaternions (ré-exporté par zentrix_core::math)
+glam = { version = "0.34", features = ["bytemuck", "serde"] } # vecteurs / matrices / quaternions (ré-exporté par zentrix_core::math)
 
 # --- Journalisation (logs) ---
 log = "0.4"             # "façade" : les crates écrivent `log::info!(...)`
