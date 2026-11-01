@@ -88,6 +88,7 @@ L'ordre alphabétique des noms de fichiers donne donc l'ordre chronologique.
 | 2026-11-01 | changement-majeur | [Contrôleur de personnage et mode marche](2026-11-01_changement-majeur_controleur-de-personnage.md) |
 | 2026-11-01 | amelioration | [Intégration continue (GitHub Actions)](2026-11-01_amelioration_integration-continue.md) |
 | 2026-11-01 | amelioration | [Mesures GPU (horodatages)](2026-11-01_amelioration_mesures-gpu.md) |
+| 2026-11-01 | changement-majeur | [Éditeur : sélection, gizmos, création, suppression, annuler](2026-11-01_changement-majeur_editeur.md) |
 
 > Les entrées du 2026-07-13 et du 2026-10-18 ont été reconstituées a posteriori à partir de
 > l'historique git (`git log --stat`).

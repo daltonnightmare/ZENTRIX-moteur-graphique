@@ -233,6 +233,7 @@ impl Physics {
     pub fn step(&mut self, scene: &mut Scene, dt: f32) -> u32 {
         profiling::scope!("Physics::step");
         self.remove_dead_bodies(scene);
+        self.forget_stale_bodies(scene);
         self.create_new_bodies(scene);
         // Les personnages AVANT `push_transforms` : leur nouvelle position
         // est transmise à leur corps cinématique dans la foulée.
@@ -537,6 +538,23 @@ impl Physics {
             rapier::QueryFilter::default().exclude_rigid_body(character),
         );
         controller.solve_character_collision_impulses(dt, &mut queries, &*shape, mass, collisions);
+    }
+
+    /// Une entité dont le `PhysicsBody` ne désigne plus SON corps : ses
+    /// composants ont été déplacés vers une nouvelle entité (l'éditeur
+    /// restaure ainsi un objet supprimé, quand on annule). On retire ce
+    /// composant périmé : le corps sera recréé, comme pour une nouvelle entité.
+    fn forget_stale_bodies(&mut self, scene: &mut Scene) {
+        let stale: Vec<Entity> = scene
+            .world
+            .query::<(Entity, &PhysicsBody)>()
+            .iter()
+            .filter(|(entity, body)| self.bodies.get(entity) != Some(&body.handle))
+            .map(|(entity, _)| entity)
+            .collect();
+        for entity in stale {
+            let _ = scene.world.remove_one::<PhysicsBody>(entity);
+        }
     }
 
     /// Supprime les corps dont l'entité a disparu (ou a été remplacée).
@@ -1079,6 +1097,34 @@ mod tests {
         vouloir(&mut scene, perso, Vec3::NEG_X * 3.0, false);
         simuler(&mut physics, &mut scene, 2.0);
         assert!(personnage(&scene, perso).grounded);
+    }
+
+    /// Comme l'éditeur quand on annule une suppression : les composants
+    /// d'une entité (dont son `PhysicsBody` interne) passent à une nouvelle.
+    #[test]
+    fn une_entite_restauree_retrouve_un_corps() {
+        let mut scene = Scene::default();
+        let balle = sol_et_balle(&mut scene);
+        let mut physics = Physics::new();
+        simuler(&mut physics, &mut scene, 0.2);
+        let mut builder = zentrix_scene::hecs::EntityBuilder::new();
+        builder.add_bundle(scene.world.take(balle).unwrap());
+        physics.step(&mut scene, TIME_STEP);
+        assert_eq!(
+            physics.body_count(),
+            1,
+            "le corps de l'entité disparue est retiré"
+        );
+
+        let restauree = scene.world.spawn(builder.build());
+        physics.step(&mut scene, TIME_STEP);
+        assert_eq!(physics.body_count(), 2, "un nouveau corps");
+        let avant = position(&scene, restauree);
+        simuler(&mut physics, &mut scene, 0.3);
+        assert!(
+            position(&scene, restauree).y < avant.y,
+            "elle tombe à nouveau"
+        );
     }
 
     #[test]

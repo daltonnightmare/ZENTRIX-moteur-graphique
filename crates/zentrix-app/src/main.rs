@@ -51,6 +51,7 @@
 //! | `Échap`             | libérer la souris, puis quitter               |
 
 mod demo;
+mod editor;
 mod fly_camera;
 mod game;
 mod inspector;
@@ -64,7 +65,7 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use zentrix_audio::{Audio, AudioListener, SoundEmitter};
-use zentrix_core::math::{Mat4, Quat, Vec3};
+use zentrix_core::math::{Mat4, Quat, Vec2, Vec3};
 use zentrix_core::{Color, FrameProfiler, Image, Transform};
 use zentrix_physics::{CharacterController, Collider, Physics, RigidBody};
 use zentrix_platform::{
@@ -73,10 +74,11 @@ use zentrix_platform::{
 };
 use zentrix_render::{DebugLines, DrawCommand, MaterialTextures, MeshData, Renderer};
 use zentrix_rhi::GpuContext;
-use zentrix_scene::{AssetNames, DirectionalLight, Scene, SceneSerializer, hecs};
+use zentrix_scene::{AssetNames, DirectionalLight, Entity, Scene, SceneSerializer, hecs};
 use zentrix_ui::UiLayer;
 
 use crate::demo::{Ball, DemoAssets, GROUND_Y, Spin, StressCube};
+use crate::editor::{Edit, Gizmo, GizmoMode, GizmoResponse, History, SpawnKind};
 use crate::fly_camera::FlyCamera;
 use crate::game::{Game, GameEvent, GameItem};
 use crate::inspector::{Inspector, Perf, Toggles};
@@ -181,6 +183,16 @@ struct ZentrixApp {
     day: Option<(f32, Color, f32)>,
     /// La partie de « chasse aux cristaux » (touche `G`).
     game: Game,
+    /// L'éditeur (inspecteur ouvert) : le gizmo, l'historique pour annuler,
+    /// le nombre d'objets créés (pour leur nom).
+    gizmo: Gizmo,
+    history: History,
+    spawned: u32,
+    /// Le geste du gizmo en cours : l'objet et son `Transform` au début.
+    gesture: Option<(Entity, Transform)>,
+    /// La souris est capturée par le clic droit de l'éditeur : elle sera
+    /// libérée quand le bouton sera relâché.
+    editor_look: bool,
     /// L'animation est-elle en pause ?
     paused: bool,
     /// Demande de fermeture (touche Échap).
@@ -212,6 +224,11 @@ impl ZentrixApp {
             stress: false,
             day: None,
             game: Game::default(),
+            gizmo: Gizmo::default(),
+            history: History::default(),
+            spawned: 0,
+            gesture: None,
+            editor_look: false,
             paused: false,
             quit_requested: false,
         }
@@ -386,44 +403,166 @@ impl ZentrixApp {
         let path = scene_path();
         let result = std::fs::read_to_string(&path)
             .map_err(anyhow::Error::from)
-            .and_then(|text| {
-                let mut scene = Scene::default();
-                self.serializer.load(&mut scene, &text, &self.names)?;
-                Ok(scene)
-            });
+            .and_then(|text| self.replace_scene(&text));
         match result {
-            Ok(scene) => {
-                self.scene = scene;
-                // Une partie en cours ne survit pas au changement de scène :
-                // on retire aussi les cristaux et cibles que le fichier contenait.
-                self.game.reset(&mut self.scene.world);
-                // Le fichier contient peut-être le champ de stress.
-                self.stress = self
-                    .scene
-                    .world
-                    .query::<&StressCube>()
-                    .iter()
-                    .next()
-                    .is_some();
-                // Les corps de l'ancienne scène n'ont plus d'entité : on
-                // repart de zéro (ils seront recréés depuis les composants).
-                self.physics.clear();
-                // Après les balles du fichier, pour garder des numéros uniques.
-                self.next_ball = self
-                    .scene
-                    .world
-                    .query::<&Ball>()
-                    .iter()
-                    .map(|b| b.serial + 1)
-                    .max()
-                    .unwrap_or(0);
-                log::info!(
-                    "Scène rechargée : {} ({} entités)",
-                    path.display(),
-                    self.scene.entity_count()
-                );
-            }
+            Ok(()) => log::info!(
+                "Scène rechargée : {} ({} entités)",
+                path.display(),
+                self.scene.entity_count()
+            ),
             Err(error) => log::error!("Chargement impossible ({}) : {error:#}", path.display()),
+        }
+    }
+
+    /// Remplace la scène par celle décrite par `text` (le format de `F5`).
+    ///
+    /// On charge dans une scène NEUVE : si le texte est invalide, la scène
+    /// actuelle reste intacte.
+    fn replace_scene(&mut self, text: &str) -> anyhow::Result<()> {
+        let mut scene = Scene::default();
+        self.serializer.load(&mut scene, text, &self.names)?;
+        self.scene = scene;
+        // L'historique désigne des entités de l'ancienne scène.
+        self.history.clear();
+        self.gesture = None;
+        // Une partie en cours ne survit pas au changement de scène : on
+        // retire aussi les cristaux et cibles que le texte contenait.
+        self.game.reset(&mut self.scene.world);
+        // Le texte contient peut-être le champ de stress.
+        self.stress = self
+            .scene
+            .world
+            .query::<&StressCube>()
+            .iter()
+            .next()
+            .is_some();
+        // Les corps de l'ancienne scène n'ont plus d'entité : on repart de
+        // zéro (ils seront recréés depuis les composants).
+        self.physics.clear();
+        // Après les balles du texte, pour garder des numéros uniques.
+        self.next_ball = self
+            .scene
+            .world
+            .query::<&Ball>()
+            .iter()
+            .map(|b| b.serial + 1)
+            .max()
+            .unwrap_or(0);
+        Ok(())
+    }
+
+    /// `Ctrl+Z` (annuler) ou `Ctrl+Y` (refaire, `redo = true`).
+    fn undo_redo(&mut self, redo: bool) {
+        if self.gizmo.is_dragging() {
+            return;
+        }
+        let remap = if redo {
+            self.history.redo(&mut self.scene.world)
+        } else {
+            self.history.undo(&mut self.scene.world)
+        };
+        let Some(remap) = remap else { return };
+        // Un objet restauré a un nouvel identifiant : la sélection le suit.
+        if let Some(selected) = self.inspector.selected()
+            && let Some(&(_, moved)) = remap.iter().find(|(old, _)| *old == selected)
+        {
+            self.inspector.select(Some(moved));
+        }
+        log::info!("{}", if redo { "Refait" } else { "Annulé" });
+    }
+
+    /// `Suppr` : supprime l'objet sélectionné et ses enfants (d'une façon
+    /// qu'on peut annuler).
+    fn delete_selected(&mut self) {
+        let Some(entity) = self.inspector.selected() else {
+            return;
+        };
+        let mut branch = self.scene.descendants(entity);
+        branch.insert(0, entity);
+        let count = branch.len();
+        self.history.delete(&mut self.scene.world, branch);
+        self.inspector.select(None);
+        log::info!("Supprimé : {count} entité(s) (Ctrl+Z pour annuler)");
+    }
+
+    /// Le geste du gizmo vient de se terminer : il entre dans l'historique.
+    fn finish_gesture(&mut self) {
+        if self.gizmo.is_dragging() {
+            return;
+        }
+        let Some((entity, before)) = self.gesture.take() else {
+            return;
+        };
+        if let Ok(after) = self.scene.world.get::<&Transform>(entity).map(|t| *t)
+            && after != before
+        {
+            self.history.record(Edit::Transform {
+                entity,
+                before,
+                after,
+            });
+        }
+    }
+
+    /// Ajoute un objet devant la caméra (à 4 m, ou devant le premier
+    /// obstacle s'il est plus près), et le sélectionne.
+    fn spawn_object(&mut self, kind: SpawnKind) {
+        let Some(eye) = self.camera_transform() else {
+            return;
+        };
+        let forward = eye.rotation * Vec3::NEG_Z;
+        let me = player::find(&self.scene.world);
+        let distance = self
+            .physics
+            .cast_ray_excluding(eye.translation, forward, 4.0, me)
+            .map_or(4.0, |hit| (hit.distance - 0.6).max(0.5));
+        let Some(assets) = &self.assets else { return };
+        self.spawned += 1;
+        let entity = editor::spawn_object(
+            &mut self.scene.world,
+            assets,
+            kind,
+            eye.translation + forward * distance,
+            self.spawned,
+        );
+        self.history.record(Edit::Presence {
+            deleted: false,
+            entities: vec![entity],
+            stash: Vec::new(),
+        });
+        self.inspector.select(Some(entity));
+    }
+
+    /// La souris dans l'éditeur : clic droit maintenu pour piloter, clic
+    /// gauche pour sélectionner l'objet sous le curseur.
+    fn editor_mouse(&mut self, input: &Input, over_ui: bool, gizmo: GizmoResponse) {
+        if input.was_button_pressed(MouseButton::Right) && !over_ui && !self.mouse_captured {
+            self.set_mouse_captured(true);
+            self.editor_look = self.mouse_captured;
+        }
+        if self.editor_look && !input.is_button_down(MouseButton::Right) {
+            self.set_mouse_captured(false);
+            self.editor_look = false;
+        }
+
+        if input.was_button_pressed(MouseButton::Left)
+            && !over_ui
+            && !gizmo.active
+            && !self.mouse_captured
+            && let (Some(g), Some(cursor)) = (&self.graphics, input.cursor_position())
+        {
+            let (width, height) = g.gpu.size();
+            let size = Vec2::new(width as f32, height.max(1) as f32);
+            let camera = self.scene.camera().unwrap_or_default();
+            let (origin, direction) =
+                editor::screen_ray(camera.view_projection(size.x / size.y), cursor / size);
+            let hit = editor::pick(
+                &self.scene.world,
+                |mesh| g.renderer.mesh_bounds(mesh),
+                origin,
+                direction,
+            );
+            self.inspector.select(hit);
         }
     }
 
@@ -565,6 +704,35 @@ impl ZentrixApp {
         // Alt+Tab pendant la capture : on rend la souris au système.
         if !input.is_focused() && self.mouse_captured {
             self.set_mouse_captured(false);
+        }
+
+        // L'éditeur (inspecteur ouvert). Ctrl+Z et Ctrl+Y d'après la lettre
+        // IMPRIMÉE sur la touche : en AZERTY, la touche Z n'est pas à la place
+        // du Z d'un clavier QWERTY.
+        if self.inspector.visible {
+            let ctrl =
+                input.is_key_down(KeyCode::ControlLeft) || input.is_key_down(KeyCode::ControlRight);
+            let shift =
+                input.is_key_down(KeyCode::ShiftLeft) || input.is_key_down(KeyCode::ShiftRight);
+            if ctrl && input.was_character_pressed('z') {
+                // Ctrl+Maj+Z refait aussi, comme dans beaucoup de logiciels.
+                self.undo_redo(shift);
+            } else if ctrl && input.was_character_pressed('y') {
+                self.undo_redo(true);
+            }
+            let modes = [
+                (KeyCode::Digit1, GizmoMode::Translate),
+                (KeyCode::Digit2, GizmoMode::Rotate),
+                (KeyCode::Digit3, GizmoMode::Scale),
+            ];
+            for (key, mode) in modes {
+                if input.was_key_pressed(key) && !self.gizmo.is_dragging() {
+                    self.gizmo.mode = mode;
+                }
+            }
+            if input.was_key_pressed(KeyCode::Delete) {
+                self.delete_selected();
+            }
         }
     }
 }
@@ -714,8 +882,15 @@ impl Application for ZentrixApp {
 
         // --- L'interface : elle peut modifier la scène, avant les systèmes ----
         let mut requests = inspector::Requests::default();
+        let mut gizmo = GizmoResponse::default();
         if let Some(g) = &mut self.graphics {
             let mut vsync = g.gpu.vsync();
+            let (width, height) = g.gpu.size();
+            let camera = self.scene.camera().unwrap_or_default();
+            let view_projection = camera.view_projection(width as f32 / height.max(1) as f32);
+            let snap =
+                input.is_key_down(KeyCode::ControlLeft) || input.is_key_down(KeyCode::ControlRight);
+            let (can_undo, can_redo) = (self.history.can_undo(), self.history.can_redo());
             let perf = Perf {
                 fps: self.last_fps,
                 stats: g.renderer.stats(),
@@ -747,8 +922,26 @@ impl Application for ZentrixApp {
                     multithreading: &mut g.renderer.multithreading,
                     vsync: &mut vsync,
                     gpu_timing: &mut g.renderer.gpu_timing_enabled,
+                    gizmo_mode: &mut self.gizmo.mode,
+                    can_undo,
+                    can_redo,
                 };
                 requests = self.inspector.show(ctx, &mut self.scene, toggles, perf);
+                // Le gizmo de l'objet sélectionné (pas pendant qu'on pilote).
+                if self.inspector.visible
+                    && !self.mouse_captured
+                    && let Some(entity) = self.inspector.selected()
+                {
+                    gizmo = editor::show_gizmo(
+                        &mut self.gizmo,
+                        ctx,
+                        &self.scene.world,
+                        entity,
+                        view_projection,
+                        camera.position,
+                        snap,
+                    );
+                }
                 self.game.hud(ctx, self.mouse_captured);
             });
             // Changer de mode d'affichage reconfigure la surface : on ne le
@@ -761,10 +954,43 @@ impl Application for ZentrixApp {
         // APRÈS que l'interface a traité l'image : avant, egui ne saurait pas
         // encore que le curseur vient d'arriver sur un de ses panneaux.
         let over_ui = self.graphics.as_ref().is_some_and(|g| g.ui.wants_pointer());
-        if input.was_button_pressed(MouseButton::Left) && !self.mouse_captured && !over_ui {
-            self.set_mouse_captured(true);
+        // Un clic dans la scène rend le clavier au moteur.
+        let clicked = input.was_button_pressed(MouseButton::Left)
+            || input.was_button_pressed(MouseButton::Right);
+        if clicked
+            && !over_ui
+            && let Some(g) = &self.graphics
+        {
+            g.ui.clear_focus();
+        }
+        if self.inspector.visible {
+            // L'éditeur : le `Transform` est noté au DÉBUT du geste, avant que
+            // le gizmo ne modifie l'objet (à l'image suivante) ; le geste
+            // entre dans l'historique quand il se termine.
+            if gizmo.started
+                && let Some(entity) = self.inspector.selected()
+                && let Ok(before) = self.scene.world.get::<&Transform>(entity).map(|t| *t)
+            {
+                self.gesture = Some((entity, before));
+            }
+            self.finish_gesture();
+            self.editor_mouse(input, over_ui, gizmo);
+        } else {
+            self.editor_look = false;
+            if input.was_button_pressed(MouseButton::Left) && !self.mouse_captured && !over_ui {
+                self.set_mouse_captured(true);
+            }
         }
 
+        if requests.undo || requests.redo {
+            self.undo_redo(requests.redo);
+        }
+        if let Some(kind) = requests.spawn {
+            self.spawn_object(kind);
+        }
+        if requests.delete {
+            self.delete_selected();
+        }
         if requests.save {
             self.save_scene();
         }
@@ -783,9 +1009,16 @@ impl Application for ZentrixApp {
         }
         // La souris ne fait tourner la vue que si elle est capturée. En
         // marche, les touches dirigent le personnage ; en vol, la caméra.
+        // Dans l'éditeur, seulement pendant le clic droit : le reste du temps,
+        // les touches servent aux raccourcis (Ctrl+Z ne doit pas faire avancer).
+        let piloting = !self.inspector.visible || self.mouse_captured;
         if player::find(&self.scene.world).is_some() {
-            player::input_system(&mut self.scene.world, input, self.mouse_captured);
-        } else {
+            if piloting {
+                player::input_system(&mut self.scene.world, input, self.mouse_captured);
+            } else {
+                player::stop(&mut self.scene.world);
+            }
+        } else if piloting {
             demo::fly_camera_system(&mut self.scene.world, input, dt, self.mouse_captured);
         }
         demo::cleanup_system(&mut self.scene.world);
@@ -838,10 +1071,13 @@ impl Application for ZentrixApp {
 
         if let Some(fps) = self.fps.tick(dt) {
             self.last_fps = fps;
-            g.window.set_title(&format!(
-                "{} — {fps:.0} FPS — clic : piloter, Échap : libérer",
-                g.title
-            ));
+            let hint = if self.inspector.visible {
+                "éditeur : clic = sélectionner, clic droit maintenu = piloter, F4 = jouer"
+            } else {
+                "clic : piloter, Échap : libérer, F4 = éditeur"
+            };
+            g.window
+                .set_title(&format!("{} — {fps:.0} FPS — {hint}", g.title));
         }
 
         if self.show_grid {
@@ -1034,6 +1270,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zentrix_scene::Name;
 
     #[test]
     fn fps_moyenne_sur_une_demi_seconde() {
@@ -1045,5 +1282,94 @@ mod tests {
         // La 30e atteint 0,5 s : 30 images / 0,5 s = 60 FPS.
         let moyenne = fps.tick(1.0 / 60.0).expect("une moyenne");
         assert!((moyenne - 60.0).abs() < 0.01, "{moyenne}");
+    }
+
+    /// L'application sans fenêtre : une caméra et un cube nommé « Cube ».
+    fn app_avec_un_cube() -> (ZentrixApp, Entity) {
+        let mut app = ZentrixApp::new();
+        let mesh = zentrix_render::MeshHandle::from_index(0);
+        app.names.add_mesh("cube", mesh);
+        let (fly, transform) = FlyCamera::looking_at(Vec3::new(0.0, 2.0, 8.0), Vec3::ZERO);
+        app.scene
+            .world
+            .spawn((transform, fly, zentrix_scene::Camera3d::default()));
+        let cube = app.scene.world.spawn((
+            Name::new("Cube"),
+            Transform::IDENTITY,
+            zentrix_scene::MeshRenderer::new(mesh),
+        ));
+        (app, cube)
+    }
+
+    fn position_du_cube(app: &ZentrixApp) -> Vec3 {
+        app.scene
+            .world
+            .query::<(&Name, &Transform)>()
+            .iter()
+            .find(|(n, _)| n.0 == "Cube")
+            .map(|(_, t)| t.translation)
+            .unwrap()
+    }
+
+    #[test]
+    fn annuler_et_refaire_un_deplacement() {
+        let (mut app, cube) = app_avec_un_cube();
+        app.inspector.select(Some(cube));
+
+        // Un geste du gizmo : noté au début, déplacé, puis terminé.
+        app.gesture = Some((cube, Transform::IDENTITY));
+        app.scene
+            .world
+            .get::<&mut Transform>(cube)
+            .unwrap()
+            .translation = Vec3::X * 3.0;
+        app.finish_gesture();
+        assert!(app.history.can_undo());
+        // Entre-temps, la caméra a bougé : annuler ne doit pas la ramener.
+        let camera = Vec3::new(5.0, 5.0, 5.0);
+        for (t, _) in app.scene.world.query_mut::<(&mut Transform, &FlyCamera)>() {
+            t.translation = camera;
+        }
+
+        app.undo_redo(false);
+        assert_eq!(position_du_cube(&app), Vec3::ZERO, "annulé");
+        assert_eq!(app.camera_transform().unwrap().translation, camera);
+        assert_eq!(
+            app.inspector.selected(),
+            Some(cube),
+            "même entité, toujours sélectionnée"
+        );
+
+        app.undo_redo(true);
+        assert_eq!(position_du_cube(&app), Vec3::X * 3.0, "refait");
+        assert!(!app.history.can_redo());
+    }
+
+    #[test]
+    fn un_geste_sans_effet_n_entre_pas_dans_l_historique() {
+        let (mut app, cube) = app_avec_un_cube();
+        app.gesture = Some((cube, Transform::IDENTITY));
+        app.finish_gesture();
+        assert!(!app.history.can_undo());
+    }
+
+    #[test]
+    fn supprimer_puis_annuler() {
+        let (mut app, cube) = app_avec_un_cube();
+        app.inspector.select(Some(cube));
+        app.delete_selected();
+        assert!(!app.scene.world.contains(cube));
+        assert_eq!(app.inspector.selected(), None);
+        app.undo_redo(false);
+        assert_eq!(position_du_cube(&app), Vec3::ZERO, "le cube est revenu");
+        app.undo_redo(true);
+        assert!(
+            app.scene
+                .world
+                .query::<&Name>()
+                .iter()
+                .all(|n| n.0 != "Cube"),
+            "et supprimé de nouveau"
+        );
     }
 }

@@ -119,6 +119,12 @@ impl Scene {
         hierarchy::propagate(&mut self.world, &mut self.propagation);
     }
 
+    /// Tous les descendants d'une entité (enfants, petits-enfants...), sans
+    /// l'entité elle-même.
+    pub fn descendants(&self, entity: Entity) -> Vec<Entity> {
+        hierarchy::descendants(&self.world, entity)
+    }
+
     /// Supprime une entité **et tous ses descendants**.
     ///
     /// Avec un simple `world.despawn(entité)`, les enfants survivraient et

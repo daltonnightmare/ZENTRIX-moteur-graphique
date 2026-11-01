@@ -547,6 +547,12 @@ impl Renderer {
         self.stats
     }
 
+    /// La boîte englobante d'un maillage, dans son propre repère (avant le
+    /// `Transform` de l'objet). Sert à trouver l'objet sous le curseur.
+    pub fn mesh_bounds(&self, mesh: MeshHandle) -> Option<Aabb> {
+        self.mesh_bounds.get(mesh.0).copied()
+    }
+
     /// Le temps passé par le GPU sur chaque étape de l'image (moyennes
     /// glissantes). `None` si le GPU ne permet pas de le mesurer.
     pub fn gpu_timings(&self) -> Option<GpuTimings> {

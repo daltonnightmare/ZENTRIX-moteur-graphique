@@ -101,8 +101,27 @@ impl UiLayer {
     /// À appeler pour chaque événement de la fenêtre. Renvoie `true` si
     /// l'interface l'a « consommé » (clic sur un panneau, frappe dans un
     /// champ de texte) : le jeu ne doit alors pas y réagir.
+    ///
+    /// Une touche du clavier n'est consommée que si un **champ de texte** a
+    /// le focus. egui-winit, lui, la consomme dès qu'un widget quelconque a
+    /// le focus. Or cliquer sur un bouton (« Ajouter un cube ») lui donne le
+    /// focus : ensuite, `Suppr`, `Ctrl+Z` ou `F1` n'arrivaient plus au moteur.
     pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
-        self.state.on_window_event(window, event).consumed
+        let consumed = self.state.on_window_event(window, event).consumed;
+        match event {
+            WindowEvent::KeyboardInput { .. } => consumed && self.ctx.text_edit_focused(),
+            _ => consumed,
+        }
+    }
+
+    /// Retire le focus clavier de l'interface (on a cliqué dans la scène) :
+    /// sinon, `Espace` ou `Entrée` « recliqueraient » le dernier bouton utilisé.
+    pub fn clear_focus(&self) {
+        self.ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        });
     }
 
     /// Décrit l'interface pour cette image. `build` reçoit le contexte egui
@@ -129,7 +148,7 @@ impl UiLayer {
 
     /// Un champ de texte de l'interface a-t-il le focus clavier ?
     pub fn wants_keyboard(&self) -> bool {
-        self.ctx.egui_wants_keyboard_input()
+        self.ctx.text_edit_focused()
     }
 
     fn screen_descriptor(&self, (width, height): (u32, u32)) -> egui_wgpu::ScreenDescriptor {

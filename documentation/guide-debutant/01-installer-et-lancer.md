@@ -85,7 +85,7 @@ dans la fenêtre pour piloter la caméra :
 | `F1`                  | Afficher / masquer la grille, les axes et la direction de la lumière |
 | `F2`                  | Afficher / masquer les boîtes et les liens parent → enfant |
 | `F3`                  | Activer / désactiver les ombres portées         |
-| `F4`                  | Afficher / masquer l'inspecteur (interface egui) |
+| `F4`                  | Afficher / masquer l'inspecteur (interface egui). Inspecteur ouvert = **mode éditeur** (tableau ci-dessous) |
 | `F5` / `F9`           | Sauvegarder / recharger la scène (`assets/scenes/demo.ron`) |
 | `F6`                  | Activer / désactiver le tone mapping            |
 | `F7`                  | Activer / désactiver l'environnement (ciel, reflets) |
@@ -97,6 +97,18 @@ dans la fenêtre pour piloter la caméra :
 | `G`                   | Lancer une partie de « chasse aux cristaux » (60 s : ramasser les cristaux en passant dessus, toucher les cibles avec `B`) |
 | `C`                   | Passer du vol à la marche (personnage à la première personne) et inversement. En marche : `Z` `Q` `S` `D` pour marcher, `Espace` pour sauter, `Maj` pour courir |
 | `Échap`               | Libérer la souris, puis quitter                 |
+
+En **mode éditeur** (inspecteur ouvert) :
+
+| Touche / geste        | Action                                          |
+|-----------------------|-------------------------------------------------|
+| clic gauche           | Sélectionner l'objet sous le curseur (dans le vide : désélectionner) |
+| glisser une poignée   | Déplacer / tourner / agrandir l'objet sélectionné (`Ctrl` : par crans de 25 cm, 15°, 10 %) |
+| `1` `2` `3`           | Gizmo de déplacement, de rotation, d'agrandissement |
+| clic droit maintenu   | Piloter la caméra (souris et `Z` `Q` `S` `D`)   |
+| `Suppr`               | Supprimer l'objet sélectionné (avec ses enfants) |
+| `Ctrl+Z` / `Ctrl+Y`   | Annuler / refaire                               |
+| « Ajouter : Cube, Sphère, Lampe » | Créer un objet devant la caméra     |
 
 > Les captures de ce guide montrent parfois l'ancienne démo (un triangle sur fond animé) :
 > l'historique des changements est dans le [journal de travail](../../journal-de-travail/README.md).

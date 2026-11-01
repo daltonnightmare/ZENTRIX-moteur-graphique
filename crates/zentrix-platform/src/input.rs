@@ -33,11 +33,17 @@ use zentrix_core::math::Vec2;
 /// en haut à gauche du pavé de déplacement : `W` en QWERTY, **`Z` en AZERTY**.
 /// Résultat : des contrôles « WASD » deviennent automatiquement « ZQSD » sur
 /// un clavier français, sans aucune configuration.
+///
+/// Pour un **raccourci** au contraire (Ctrl+Z : annuler), c'est la lettre
+/// imprimée qui compte : [`Input::was_character_pressed`] la donne.
 #[derive(Debug, Default)]
 pub struct Input {
     keys_down: HashSet<KeyCode>,
     keys_pressed: HashSet<KeyCode>,
     keys_released: HashSet<KeyCode>,
+    /// Les lettres (en minuscules) des touches enfoncées pendant cette image,
+    /// selon la disposition du clavier.
+    characters_pressed: HashSet<char>,
     buttons_down: HashSet<MouseButton>,
     buttons_pressed: HashSet<MouseButton>,
     buttons_released: HashSet<MouseButton>,
@@ -69,6 +75,15 @@ impl Input {
     /// La touche a-t-elle été relâchée pendant cette image ?
     pub fn was_key_released(&self, key: KeyCode) -> bool {
         self.keys_released.contains(&key)
+    }
+
+    /// Une touche portant cette lettre a-t-elle été enfoncée pendant cette
+    /// image ? C'est la lettre **imprimée** (disposition du clavier), sans
+    /// distinction de majuscule : `'z'` est la touche Z en AZERTY comme en
+    /// QWERTY, même avec Ctrl ou Maj. Pour les raccourcis.
+    pub fn was_character_pressed(&self, character: char) -> bool {
+        self.characters_pressed
+            .contains(&character.to_lowercase().next().unwrap_or(character))
     }
 
     /// Le bouton de la souris est-il enfoncé en ce moment ?
@@ -128,6 +143,12 @@ impl Input {
         }
     }
 
+    /// Le texte d'une touche enfoncée (souvent une seule lettre).
+    pub(crate) fn on_character(&mut self, text: &str) {
+        self.characters_pressed
+            .extend(text.chars().flat_map(char::to_lowercase));
+    }
+
     pub(crate) fn on_button(&mut self, button: MouseButton, pressed: bool) {
         if pressed {
             if self.buttons_down.insert(button) {
@@ -172,6 +193,7 @@ impl Input {
     pub(crate) fn end_frame(&mut self) {
         self.keys_pressed.clear();
         self.keys_released.clear();
+        self.characters_pressed.clear();
         self.buttons_pressed.clear();
         self.buttons_released.clear();
         self.mouse_delta = Vec2::ZERO;
@@ -228,6 +250,25 @@ mod tests {
         input.on_key(KeyCode::KeyW, false);
         assert!(!input.is_key_down(KeyCode::KeyW));
         assert!(input.was_key_released(KeyCode::KeyW));
+    }
+
+    #[test]
+    fn la_lettre_imprimee_pour_les_raccourcis() {
+        let mut input = Input::default();
+        // En AZERTY, la touche physique KeyW porte la lettre Z.
+        input.on_key(KeyCode::KeyW, true);
+        input.on_character("Z");
+        assert!(input.was_character_pressed('z'));
+        assert!(
+            input.was_character_pressed('Z'),
+            "sans distinction de majuscule"
+        );
+        assert!(!input.was_character_pressed('w'));
+        input.end_frame();
+        assert!(
+            !input.was_character_pressed('z'),
+            "un appui ne dure qu'une image"
+        );
     }
 
     #[test]

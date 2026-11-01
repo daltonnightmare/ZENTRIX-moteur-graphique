@@ -149,6 +149,15 @@ pub fn input_system(world: &mut hecs::World, input: &Input, look: bool) {
     }
 }
 
+/// Le personnage s'arrête (dans l'éditeur, quand on ne pilote pas : les
+/// touches servent alors aux raccourcis).
+pub fn stop(world: &mut hecs::World) {
+    for character in world.query_mut::<hecs::With<&mut CharacterController, &Player>>() {
+        character.desired_velocity = Vec3::ZERO;
+        character.jump = false;
+    }
+}
+
 /// Système, APRÈS la physique : la caméra rejoint les yeux du personnage.
 pub fn camera_follow_system(world: &mut hecs::World) {
     let Some(feet) = world

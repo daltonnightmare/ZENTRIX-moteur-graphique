@@ -7,7 +7,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{Key, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use zentrix_core::FrameTimer;
@@ -167,6 +167,7 @@ impl<A: Application> ApplicationHandler for PlatformRunner<A> {
                 event:
                     KeyEvent {
                         physical_key: PhysicalKey::Code(key),
+                        logical_key,
                         state,
                         repeat: false, // on ignore la répétition auto quand on reste appuyé
                         ..
@@ -178,6 +179,11 @@ impl<A: Application> ApplicationHandler for PlatformRunner<A> {
                 // transmis au jeu ; un relâchement l'est toujours.
                 if !(consumed && pressed) {
                     self.input.on_key(key, pressed);
+                    // La lettre imprimée sur la touche (pour les raccourcis
+                    // comme Ctrl+Z). winit la donne sans l'effet de Ctrl.
+                    if pressed && let Key::Character(text) = &logical_key {
+                        self.input.on_character(text);
+                    }
                     self.app.on_key(key, pressed);
                 }
             }

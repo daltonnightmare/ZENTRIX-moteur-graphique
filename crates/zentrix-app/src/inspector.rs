@@ -8,6 +8,7 @@ use zentrix_scene::{DirectionalLight, Entity, MeshRenderer, Name, PointLight, Sc
 use zentrix_ui::egui;
 
 use crate::demo::Spin;
+use crate::editor::{GizmoMode, SpawnKind};
 
 /// Les réglages de l'application que l'inspecteur peut modifier.
 /// Des références `&mut` : l'inspecteur agit directement sur les vraies valeurs.
@@ -32,6 +33,11 @@ pub struct Toggles<'a> {
     pub multithreading: &'a mut bool,
     pub vsync: &'a mut bool,
     pub gpu_timing: &'a mut bool,
+    /// Ce que fait le gizmo de l'éditeur.
+    pub gizmo_mode: &'a mut GizmoMode,
+    /// Y a-t-il quelque chose à annuler, à refaire ?
+    pub can_undo: bool,
+    pub can_redo: bool,
 }
 
 /// Les mesures de performance à afficher. `Copy` : de simples lectures,
@@ -55,6 +61,11 @@ pub struct Requests {
     pub load: bool,
     /// Ajouter ou retirer le champ de stress.
     pub toggle_stress: bool,
+    /// Éditeur : annuler, refaire, ajouter un objet, supprimer la sélection.
+    pub undo: bool,
+    pub redo: bool,
+    pub spawn: Option<SpawnKind>,
+    pub delete: bool,
 }
 
 /// L'état de l'inspecteur (ce qui doit survivre d'une image à l'autre).
@@ -93,6 +104,11 @@ impl Inspector {
         self.selected
     }
 
+    /// Sélectionne une entité (clic dans la scène), ou aucune.
+    pub fn select(&mut self, entity: Option<Entity>) {
+        self.selected = entity;
+    }
+
     /// Décrit la fenêtre de l'inspecteur pour cette image (mode immédiat).
     pub fn show(
         &mut self,
@@ -110,10 +126,20 @@ impl Inspector {
             self.selected = None;
         }
 
+        // Le nom de la sélection, affiché en haut avec le bouton « Supprimer ».
+        let selection = self.selected.map(|e| {
+            scene
+                .world
+                .get::<&Name>(e)
+                .map_or_else(|_| format!("{e:?}"), |n| n.0.clone())
+        });
+
         egui::Window::new("Inspecteur (F4)")
             .default_pos([12.0, 12.0])
             .default_width(300.0)
             .show(ctx, |ui| {
+                editor_section(ui, &mut toggles, &mut requests, selection.as_deref());
+                ui.separator();
                 self.engine_section(ui, scene, &mut toggles, perf.fps, &mut requests);
                 ui.separator();
                 performance_section(ui, toggles, &perf, &mut requests);
@@ -122,7 +148,7 @@ impl Inspector {
                 ui.separator();
                 self.entity_list(ui, scene);
                 ui.separator();
-                self.selection_section(ui, scene);
+                self.selection_section(ui, scene, &mut requests);
             });
         requests
     }
@@ -231,9 +257,9 @@ impl Inspector {
             });
     }
 
-    fn selection_section(&mut self, ui: &mut egui::Ui, scene: &mut Scene) {
+    fn selection_section(&mut self, ui: &mut egui::Ui, scene: &mut Scene, requests: &mut Requests) {
         let Some(entity) = self.selected else {
-            ui.weak("Cliquez sur une entité pour la modifier.");
+            ui.weak("Cliquez sur un objet de la scène, ou sur une entité de la liste, pour la modifier.");
             return;
         };
 
@@ -286,11 +312,55 @@ impl Inspector {
                 .on_hover_text("Le cœur du cône, en pleine lumière ; au-delà, la lumière s'estompe jusqu'au bord du cône");
         }
 
-        if ui.button("Supprimer (avec ses enfants)").clicked() {
-            scene.despawn_recursive(entity);
-            self.selected = None;
-        }
+        // La suppression passe par l'application, qui garde d'abord une
+        // photo de la scène pour pouvoir l'annuler.
+        requests.delete = ui.button("Supprimer, avec ses enfants (Suppr)").clicked();
     }
+}
+
+/// L'éditeur : le mode du gizmo, annuler / refaire, ajouter un objet, et
+/// l'objet sélectionné avec le bouton pour le supprimer (en haut de
+/// l'inspecteur : toujours visible, même quand la fenêtre dépasse de l'écran).
+fn editor_section(
+    ui: &mut egui::Ui,
+    toggles: &mut Toggles,
+    requests: &mut Requests,
+    selection: Option<&str>,
+) {
+    ui.horizontal(|ui| match selection {
+        Some(name) => {
+            ui.label("Sélection :");
+            ui.strong(name);
+            if ui.button("Supprimer (Suppr)").clicked() {
+                requests.delete = true;
+            }
+        }
+        None => {
+            ui.weak("Aucune sélection : cliquez sur un objet.");
+        }
+    });
+    ui.horizontal(|ui| {
+        for mode in GizmoMode::ALL {
+            ui.selectable_value(toggles.gizmo_mode, mode, mode.label());
+        }
+    });
+    ui.horizontal(|ui| {
+        requests.undo = ui
+            .add_enabled(toggles.can_undo, egui::Button::new("Annuler (Ctrl+Z)"))
+            .clicked();
+        requests.redo = ui
+            .add_enabled(toggles.can_redo, egui::Button::new("Refaire (Ctrl+Y)"))
+            .clicked();
+    });
+    ui.horizontal(|ui| {
+        ui.label("Ajouter :");
+        for kind in SpawnKind::ALL {
+            if ui.button(kind.label()).clicked() {
+                requests.spawn = Some(kind);
+            }
+        }
+    });
+    ui.weak("Clic : sélectionner · clic droit maintenu : piloter la caméra · Ctrl : par crans");
 }
 
 /// Position, rotation (en degrés) et taille d'un `Transform`.
