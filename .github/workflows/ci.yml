@@ -1,0 +1,74 @@
+# Intégration continue de ZENTRIX.
+#
+# À chaque push et à chaque pull request, GitHub lance ces vérifications sur
+# ses propres machines :
+#
+#   - format   : le code est-il formaté par rustfmt ?        (cargo fmt --check)
+#   - verifier : compile-t-il sans avertissement clippy,      (cargo clippy)
+#                et les tests passent-ils ?                   (cargo test)
+#                sur Windows ET sur Linux.
+#
+# Les tests de ZENTRIX n'ont besoin ni de GPU ni de carte son (voir les
+# handles factices et Audio::muted) : ils tournent sur ces machines sans écran.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Un nouveau push sur la même branche annule la vérification précédente,
+# devenue inutile.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Les avertissements du compilateur deviennent des erreurs, comme pour clippy.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  format:
+    name: Formatage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  verifier:
+    name: Clippy et tests (${{ matrix.os }})
+    strategy:
+      # Un échec sous Linux n'interrompt pas la vérification sous Windows :
+      # on veut voir les deux résultats.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # Sous Linux, quelques bibliothèques système sont nécessaires pour
+      # COMPILER le son (ALSA, pour kira) et la fenêtre (winit, egui).
+      - name: Bibliothèques système (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+
+      # Garde les dépendances compilées d'une exécution à l'autre : la
+      # première compilation prend plusieurs minutes, les suivantes beaucoup moins.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace

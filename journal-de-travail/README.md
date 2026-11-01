@@ -86,6 +86,7 @@ L'ordre alphabétique des noms de fichiers donne donc l'ordre chronologique.
 | 2026-11-01 | modification | [Feuille de route : Phases 24 à 27 et petites pistes](2026-11-01_modification_feuille-de-route-phases-24-27.md) |
 | 2026-11-01 | amelioration | [Petit gameplay de test : la chasse aux cristaux](2026-11-01_amelioration_petit-gameplay-chasse-aux-cristaux.md) |
 | 2026-11-01 | changement-majeur | [Contrôleur de personnage et mode marche](2026-11-01_changement-majeur_controleur-de-personnage.md) |
+| 2026-11-01 | amelioration | [Intégration continue (GitHub Actions)](2026-11-01_amelioration_integration-continue.md) |
 
 > Les entrées du 2026-07-13 et du 2026-10-18 ont été reconstituées a posteriori à partir de
 > l'historique git (`git log --stat`).

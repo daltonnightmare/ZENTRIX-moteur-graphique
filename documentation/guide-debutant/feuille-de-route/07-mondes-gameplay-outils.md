@@ -68,7 +68,7 @@ Détail du **render graph** :
 
 | Piste | Contenu | Difficulté |
 |-------|---------|------------|
-| **Intégration continue** | GitHub Actions : `cargo test`, `cargo clippy` et `cargo fmt --check` à chaque push, sur Windows et Linux | ⭐ |
+| **Intégration continue** ✅ | GitHub Actions : `cargo test`, `cargo clippy` et `cargo fmt --check` à chaque push, sur Windows et Linux — réalisée : [.github/workflows/ci.yml](../../../.github/workflows/ci.yml) (formatage, puis clippy et tests sous Windows et Linux, avertissements traités comme des erreurs, cache des dépendances) | ⭐ |
 | **Tests d'images** | Rendre des scènes de référence sans fenêtre (*headless*) et les comparer pixel par pixel à des images validées : une régression visuelle est détectée automatiquement | ⭐⭐⭐ |
 | **Version web** | Compiler en WASM et tourner dans le navigateur via WebGPU (wgpu le permet presque directement) ; adapter le chargement des fichiers et l'audio | ⭐⭐⭐ |
 | **Linux et macOS** | Vérifier la compilation et le rendu (Vulkan, Metal), puis packager une version téléchargeable pour chaque système | ⭐⭐ |
