@@ -821,10 +821,12 @@ pub fn bounds_system(world: &hecs::World, debug: &mut DebugLines) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn assets() -> DemoAssets {
+    /// Des handles factices : les tests n'ont pas de GPU (aussi utilisés
+    /// par les tests de game.rs).
+    pub(crate) fn assets() -> DemoAssets {
         DemoAssets {
             cube: MeshHandle::from_index(0),
             white_cube: MeshHandle::from_index(1),

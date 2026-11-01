@@ -73,6 +73,19 @@ L'ordre alphabétique des noms de fichiers donne donc l'ordre chronologique.
 | 2026-11-01 | changement-majeur | [Post-traitement : image HDR, bloom, tone mapping, FXAA](2026-11-01_changement-majeur_post-traitement.md) |
 | 2026-11-01 | changement-majeur | [Ombres en cascade (CSM)](2026-11-01_changement-majeur_ombres-en-cascade.md) |
 | 2026-11-01 | changement-majeur | [Lampes et projecteurs (`PointLight`, `SpotLight`)](2026-11-01_changement-majeur_lampes-et-projecteurs.md) |
+| 2026-11-01 | modification | [Feuille de route : Phase 5, géométrie virtualisée](2026-11-01_modification_feuille-de-route-phase-5-nanite.md) |
+| 2026-11-01 | modification | [Feuille de route : Phase 6, éclairage global](2026-11-01_modification_feuille-de-route-phase-6-lumen.md) |
+| 2026-11-01 | modification | [Feuille de route : Phase 7, mondes, gameplay, outils et plateformes](2026-11-01_modification_feuille-de-route-phase-7.md) |
+| 2026-11-01 | modification | [Feuille de route : Phase 8, lancer de rayons logiciel](2026-11-01_modification_feuille-de-route-phase-8-raytracing.md) |
+| 2026-11-01 | modification | [Feuille de route : cap « beau sur petit matériel », Phases 9 et 10](2026-11-01_modification_feuille-de-route-phases-9-10.md) |
+| 2026-11-01 | modification | [Feuille de route : Phases 11 à 14, animation, cinématiques, types de mondes, 2D et 3D](2026-11-01_modification_feuille-de-route-phases-11-14.md) |
+| 2026-11-01 | modification | [Feuille de route : Phases 15 à 17, entrées, fenêtres et interface, icônes, Blender et rigs](2026-11-01_modification_feuille-de-route-phases-15-17.md) |
+| 2026-11-01 | modification | [Feuille de route : Phases 18 à 20, masse et gravité, saisons, PNJ](2026-11-01_modification_feuille-de-route-phases-18-20.md) |
+| 2026-11-01 | modification | [Feuille de route : Phases 21 à 23, effets spéciaux, apprentissage automatique, états et destruction](2026-11-01_modification_feuille-de-route-phases-21-23.md) |
+| 2026-11-01 | modification | [Découpage de la feuille de route en petits fichiers](2026-11-01_modification_decoupage-feuille-de-route.md) |
+| 2026-11-01 | modification | [Feuille de route : Phases 24 à 27 et petites pistes](2026-11-01_modification_feuille-de-route-phases-24-27.md) |
+| 2026-11-01 | amelioration | [Petit gameplay de test : la chasse aux cristaux](2026-11-01_amelioration_petit-gameplay-chasse-aux-cristaux.md) |
+| 2026-11-01 | changement-majeur | [Contrôleur de personnage et mode marche](2026-11-01_changement-majeur_controleur-de-personnage.md) |
 
 > Les entrées du 2026-07-13 et du 2026-10-18 ont été reconstituées a posteriori à partir de
 > l'historique git (`git log --stat`).

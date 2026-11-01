@@ -12,13 +12,16 @@
 //! ```
 //!
 //! Le jeu ne manipule jamais rapier : il ajoute des composants
-//! ([`RigidBody`], [`Collider`]) et lit les `Transform`, comme d'habitude.
+//! ([`RigidBody`], [`Collider`], [`CharacterController`] pour un personnage)
+//! et lit les `Transform`, comme d'habitude.
 //!
 //! ## Le trajet d'une image
 //!
 //! ```text
 //!  Physics::step(scene, dt)
 //!    ├─ 1. créer les corps des nouvelles entités, supprimer ceux des entités disparues
+//!    ├─ 1 bis. déplacer les PERSONNAGES (`CharacterController`) : marche,
+//!    │         saut, gravité, marches, glissement le long des murs
 //!    ├─ 2. scène → rapier : position des corps cinématiques (et des corps
 //!    │                      déplacés à la main, par l'inspecteur par exemple)
 //!    ├─ 3. simuler par PAS FIXES de 1/60 s (0, 1 ou plusieurs selon `dt`),
@@ -50,6 +53,9 @@ mod components;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use rapier3d::control::{
+    CharacterAutostep, CharacterCollision, CharacterLength, KinematicCharacterController,
+};
 use rapier3d::math::{Pose, Rotation, Vector};
 use rapier3d::prelude as rapier;
 use zentrix_core::math::{Mat4, Quat, Vec3};
@@ -57,10 +63,13 @@ use zentrix_core::{Color, Transform};
 use zentrix_render::DebugLines;
 use zentrix_scene::{Entity, Parent, Scene};
 
-pub use components::{BodyKind, Collider, RigidBody, Shape};
+pub use components::{BodyKind, CharacterController, Collider, RigidBody, Shape};
 
 /// Durée d'un pas de simulation (60 pas par seconde).
 pub const TIME_STEP: f32 = 1.0 / 60.0;
+/// Vitesse de chute maximale d'un personnage (la résistance de l'air,
+/// grossièrement), en unités par seconde.
+const MAX_FALL_SPEED: f32 = 50.0;
 /// Au plus 5 pas par image. Si une image a duré très longtemps (chargement,
 /// fenêtre déplacée), on « oublie » le retard au lieu de le rattraper :
 /// sinon chaque image demanderait toujours plus de pas, et le jeu se figerait
@@ -153,6 +162,9 @@ pub struct Physics {
     bodies: HashMap<Entity, rapier::RigidBodyHandle>,
     /// Les chocs du dernier appel à `step`.
     impacts: Vec<Impact>,
+    /// Des corps ont été créés depuis le dernier pas simulé : la broad phase
+    /// de rapier ne les connaît pas encore.
+    unseen_bodies: bool,
 }
 
 impl Default for Physics {
@@ -192,6 +204,7 @@ impl Physics {
             accumulator: 0.0,
             bodies: HashMap::new(),
             impacts: Vec::new(),
+            unseen_bodies: false,
         }
     }
 
@@ -221,6 +234,9 @@ impl Physics {
         profiling::scope!("Physics::step");
         self.remove_dead_bodies(scene);
         self.create_new_bodies(scene);
+        // Les personnages AVANT `push_transforms` : leur nouvelle position
+        // est transmise à leur corps cinématique dans la foulée.
+        self.move_characters(scene, dt);
         self.push_transforms(scene);
 
         self.impacts.clear();
@@ -261,6 +277,7 @@ impl Physics {
 
         let collector = ContactCollector::default();
         self.world.step_with_events(&(), &collector);
+        self.unseen_bodies = false;
 
         let started = collector
             .started
@@ -311,6 +328,7 @@ impl Physics {
             .iter()
             .map(|(e, t, b, c)| (e, *t, *b, *c))
             .collect();
+        self.unseen_bodies |= !new.is_empty();
 
         for (entity, transform, body, collider) in new {
             let builder = match body.kind {
@@ -337,6 +355,15 @@ impl Physics {
                 Shape::Ball { radius } => {
                     rapier::ColliderBuilder::ball(radius * scale.max_element())
                 }
+                // La capsule reste verticale : sa hauteur suit l'échelle en
+                // Y, son rayon la plus grande échelle horizontale.
+                Shape::Capsule {
+                    half_height,
+                    radius,
+                } => rapier::ColliderBuilder::capsule_y(
+                    half_height * scale.y,
+                    radius * scale.x.max(scale.z),
+                ),
             };
             let shape = shape
                 // Signaler le début des contacts (pour `impacts`).
@@ -360,6 +387,156 @@ impl Physics {
                 )
                 .expect("l'entité existe : elle vient d'être trouvée");
         }
+    }
+
+    /// Déplace les personnages ([`CharacterController`]) selon leur vitesse
+    /// voulue, la gravité et les sauts, en tenant compte du décor.
+    ///
+    /// Le contrôleur de rapier « sonde » le décor avec la forme du personnage
+    /// dans la direction du mouvement (*shape cast*) : il s'arrête contre un
+    /// mur, ou glisse le long de lui s'il l'aborde en biais, monte les
+    /// marches et les pentes douces, et reste collé au sol en descendant.
+    ///
+    /// Contrairement à la simulation, ce calcul se fait une fois par IMAGE :
+    /// le personnage doit répondre aux touches sans attendre le prochain pas.
+    fn move_characters(&mut self, scene: &mut Scene, dt: f32) {
+        if dt <= 0.0
+            || scene
+                .world
+                .query_mut::<&CharacterController>()
+                .into_iter()
+                .next()
+                .is_none()
+        {
+            return;
+        }
+        // Les recherches du contrôleur passent par la « broad phase » de
+        // rapier, qui n'apprend l'existence des nouveaux corps qu'en simulant.
+        // Tant qu'un pas n'a pas eu lieu depuis leur création, les personnages
+        // attendent (une image ou deux) : sinon, un personnage créé en même
+        // temps que le sol passerait à travers.
+        //
+        // (Forcer cette mise à jour avec `PhysicsWorld::detect_collisions`
+        // dérègle les « îlots » de rapier, ses groupes d'objets en contact :
+        // rapier panique ensuite si le personnage touche un objet endormi.)
+        if self.unseen_bodies {
+            return;
+        }
+        let gravity = from_rapier(self.world.gravity);
+        // Les objets heurtés, poussés APRÈS la boucle : il faut alors un accès
+        // en écriture aux corps, que la recherche de collisions emprunte.
+        let mut pushes = Vec::new();
+
+        for (transform, character, body) in
+            scene
+                .world
+                .query_mut::<(&mut Transform, &mut CharacterController, &PhysicsBody)>()
+        {
+            let Some(collider_handle) = self
+                .world
+                .bodies
+                .get(body.handle)
+                .and_then(|rb| rb.colliders().first().copied())
+            else {
+                continue;
+            };
+            let collider = &self.world.colliders[collider_handle];
+
+            // La vitesse verticale : au sol, nulle (ou un saut) ; en l'air, la
+            // gravité. Sans gravité au sol, un personnage immobile ne demande
+            // AUCUN déplacement : rapier en profite pour le sortir d'un objet
+            // qui se serait glissé en lui. Et en descendant une pente, le
+            // « collage au sol » de rapier le garde sur la pente.
+            let mut vertical = if character.grounded {
+                if character.jump {
+                    character.jump_speed
+                } else {
+                    0.0
+                }
+            } else {
+                (character.vertical_speed + gravity.y * dt).max(-MAX_FALL_SPEED)
+            };
+            character.jump = false;
+
+            let horizontal = character.desired_velocity * Vec3::new(1.0, 0.0, 1.0);
+            let desired = (horizontal + Vec3::Y * vertical) * dt;
+
+            let controller = KinematicCharacterController {
+                autostep: Some(CharacterAutostep {
+                    max_height: CharacterLength::Absolute(character.step_height),
+                    min_width: CharacterLength::Absolute(0.2),
+                    // On ne « monte » pas sur une caisse qui bouge : on la pousse.
+                    include_dynamic_bodies: false,
+                }),
+                max_slope_climb_angle: character.max_slope,
+                min_slope_slide_angle: character.max_slope,
+                ..KinematicCharacterController::default()
+            };
+
+            // La position de la forme d'après le `Transform` (et non le corps
+            // rapier, qui a peut-être une image de retard si le jeu vient de
+            // téleporter le personnage). Le personnage s'ignore lui-même.
+            let offset = collider.position_wrt_parent().copied().unwrap_or_default();
+            let shape_pose = pose_of(transform) * offset;
+            let filter = rapier::QueryFilter::default().exclude_rigid_body(body.handle);
+            let queries = self.world.query_pipeline_with_filter(filter);
+            let mut collisions = Vec::new();
+            let movement = controller.move_shape(
+                dt,
+                &queries,
+                collider.shape(),
+                &shape_pose,
+                to_rapier(desired),
+                |collision| collisions.push(collision),
+            );
+
+            let moved = from_rapier(movement.translation);
+            transform.translation += moved;
+            character.grounded = movement.grounded;
+            // Au sol, on ne tombe plus ; contre un plafond, on ne monte plus.
+            if (movement.grounded && vertical < 0.0)
+                || (vertical > 0.0 && moved.y < desired.y * 0.5)
+            {
+                vertical = 0.0;
+            }
+            character.vertical_speed = vertical;
+
+            if !collisions.is_empty() {
+                pushes.push((
+                    controller,
+                    body.handle,
+                    collider_handle,
+                    character.mass,
+                    collisions,
+                ));
+            }
+        }
+
+        for (controller, handle, collider_handle, mass, collisions) in pushes {
+            self.push_bodies(&controller, handle, collider_handle, mass, &collisions, dt);
+        }
+    }
+
+    /// Les objets dynamiques heurtés par un personnage reçoivent une
+    /// impulsion : il pousse les caisses au lieu de buter dessus.
+    fn push_bodies(
+        &mut self,
+        controller: &KinematicCharacterController,
+        character: rapier::RigidBodyHandle,
+        collider: rapier::ColliderHandle,
+        mass: f32,
+        collisions: &[CharacterCollision],
+        dt: f32,
+    ) {
+        let shape = self.world.colliders[collider].shared_shape().clone();
+        let world = &mut self.world;
+        let mut queries = world.broad_phase.as_query_pipeline_mut(
+            world.narrow_phase.query_dispatcher(),
+            &mut world.bodies,
+            &mut world.colliders,
+            rapier::QueryFilter::default().exclude_rigid_body(character),
+        );
+        controller.solve_character_collision_impulses(dt, &mut queries, &*shape, mass, collisions);
     }
 
     /// Supprime les corps dont l'entité a disparu (ou a été remplacée).
@@ -424,13 +601,27 @@ impl Physics {
     /// Sert à viser : « quel objet est sous le curseur ? », « le personnage
     /// touche-t-il le sol ? »...
     pub fn cast_ray(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<RayHit> {
+        self.cast_ray_excluding(origin, direction, max_distance, None)
+    }
+
+    /// Comme [`Physics::cast_ray`], en ignorant le corps de `exclude`. Sert
+    /// à viser depuis les yeux d'un personnage : sans cela, le rayon
+    /// toucherait d'abord sa propre capsule.
+    pub fn cast_ray_excluding(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+        exclude: Option<Entity>,
+    ) -> Option<RayHit> {
         let ray = rapier::Ray::new(to_rapier(origin), to_rapier(direction));
-        let (collider, hit) = self.world.cast_ray_and_get_normal(
-            &ray,
-            max_distance,
-            true,
-            rapier::QueryFilter::default(),
-        )?;
+        let mut filter = rapier::QueryFilter::default();
+        if let Some(&handle) = exclude.and_then(|e| self.bodies.get(&e)) {
+            filter = filter.exclude_rigid_body(handle);
+        }
+        let (collider, hit) =
+            self.world
+                .cast_ray_and_get_normal(&ray, max_distance, true, filter)?;
         let body = self.world.colliders.get(collider)?.parent()?;
         let entity = entity_of(self.world.bodies.get(body)?.user_data)?;
         Some(RayHit {
@@ -482,6 +673,23 @@ impl Physics {
                     debug.wire_box(matrix * Mat4::from_scale(size), color);
                 } else if let Some(ball) = collider.shape().as_ball() {
                     wire_sphere(debug, matrix, ball.radius * INFLATE, color);
+                } else if let Some(capsule) = collider.shape().as_capsule() {
+                    // Deux sphères (les bouts) reliées par quatre traits.
+                    let radius = capsule.radius * INFLATE;
+                    let (a, b) = (
+                        from_rapier(capsule.segment.a),
+                        from_rapier(capsule.segment.b),
+                    );
+                    for end in [a, b] {
+                        wire_sphere(debug, matrix * Mat4::from_translation(end), radius, color);
+                    }
+                    for side in [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z] {
+                        debug.line(
+                            matrix.transform_point3(a + side * radius),
+                            matrix.transform_point3(b + side * radius),
+                            color,
+                        );
+                    }
                 }
             }
         }
@@ -699,5 +907,211 @@ mod tests {
         physics.apply_impulse(balle, Vec3::X * 5.0, avant);
         simuler(&mut physics, &mut scene, 0.5);
         assert!(position(&scene, balle).x > avant.x + 0.5);
+    }
+
+    /// Un sol (dessus en y = 0) et un personnage de 1,8 m, pieds en `pieds`.
+    fn sol_et_personnage(scene: &mut Scene, pieds: Vec3) -> Entity {
+        scene.world.spawn((
+            Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
+            RigidBody::fixed(),
+            Collider::cuboid(Vec3::new(20.0, 0.5, 20.0)),
+        ));
+        scene.world.spawn((
+            Transform::from_translation(pieds),
+            RigidBody::kinematic(),
+            // Hauteur 2 × (0,6 + 0,3) = 1,8 m, le bas de la capsule aux pieds.
+            Collider::capsule(0.6, 0.3).with_offset(Vec3::Y * 0.9),
+            CharacterController::default(),
+        ))
+    }
+
+    fn personnage(scene: &Scene, e: Entity) -> CharacterController {
+        *scene.world.get::<&CharacterController>(e).unwrap()
+    }
+
+    fn vouloir(scene: &mut Scene, e: Entity, vitesse: Vec3, saut: bool) {
+        let mut c = scene.world.get::<&mut CharacterController>(e).unwrap();
+        c.desired_velocity = vitesse;
+        c.jump = saut;
+    }
+
+    #[test]
+    fn un_personnage_tombe_puis_tient_debout_sur_le_sol() {
+        let mut scene = Scene::default();
+        let perso = sol_et_personnage(&mut scene, Vec3::new(0.0, 2.0, 0.0));
+        let mut physics = Physics::new();
+        simuler(&mut physics, &mut scene, 2.0);
+        let pieds = position(&scene, perso);
+        assert!(pieds.y.abs() < 0.05, "pieds en {pieds}");
+        assert!(personnage(&scene, perso).grounded);
+        assert_eq!(personnage(&scene, perso).vertical_speed, 0.0);
+    }
+
+    #[test]
+    fn un_personnage_marche_et_s_arrete_contre_un_mur() {
+        let mut scene = Scene::default();
+        let perso = sol_et_personnage(&mut scene, Vec3::ZERO);
+        // Un mur dont la face avant est en x = 3.
+        scene.world.spawn((
+            Transform::from_translation(Vec3::new(3.5, 1.5, 0.0)),
+            RigidBody::fixed(),
+            Collider::cuboid(Vec3::new(0.5, 1.5, 5.0)),
+        ));
+        let mut physics = Physics::new();
+        simuler(&mut physics, &mut scene, 0.2);
+        vouloir(&mut scene, perso, Vec3::X * 4.0, false);
+        simuler(&mut physics, &mut scene, 0.5);
+        // 0,5 s à 4 m/s : 2 m parcourus.
+        let x = position(&scene, perso).x;
+        assert!((x - 2.0).abs() < 0.1, "x = {x}");
+        simuler(&mut physics, &mut scene, 2.0);
+        // Bloqué par le mur : la capsule (rayon 0,3) s'arrête vers x = 2,7.
+        let p = position(&scene, perso);
+        assert!(p.x > 2.6 && p.x < 2.71, "{p}");
+        assert!(p.y.abs() < 0.05, "reste au sol : {p}");
+    }
+
+    #[test]
+    fn un_personnage_saute_puis_retombe() {
+        let mut scene = Scene::default();
+        let perso = sol_et_personnage(&mut scene, Vec3::ZERO);
+        let mut physics = Physics::new();
+        simuler(&mut physics, &mut scene, 0.3);
+        assert!(personnage(&scene, perso).grounded);
+
+        vouloir(&mut scene, perso, Vec3::ZERO, true);
+        let mut plus_haut: f32 = 0.0;
+        for _ in 0..30 {
+            physics.step(&mut scene, TIME_STEP);
+            plus_haut = plus_haut.max(position(&scene, perso).y);
+        }
+        // 5 m/s vers le haut : v² / 2g ≈ 1,27 m.
+        assert!((plus_haut - 1.27).abs() < 0.1, "sommet à {plus_haut}");
+        assert!(!personnage(&scene, perso).jump, "la demande est consommée");
+        simuler(&mut physics, &mut scene, 1.0);
+        assert!(position(&scene, perso).y.abs() < 0.05);
+        assert!(personnage(&scene, perso).grounded);
+
+        // En l'air, un saut ne relance pas.
+        vouloir(&mut scene, perso, Vec3::ZERO, true);
+        physics.step(&mut scene, TIME_STEP);
+        vouloir(&mut scene, perso, Vec3::ZERO, true);
+        for _ in 0..10 {
+            physics.step(&mut scene, TIME_STEP);
+        }
+        assert!(position(&scene, perso).y < 1.4);
+    }
+
+    #[test]
+    fn un_personnage_monte_une_marche() {
+        let mut scene = Scene::default();
+        let perso = sol_et_personnage(&mut scene, Vec3::ZERO);
+        // Une marche de 20 cm, de x = 1 à x = 5.
+        scene.world.spawn((
+            Transform::from_translation(Vec3::new(3.0, 0.1, 0.0)),
+            RigidBody::fixed(),
+            Collider::cuboid(Vec3::new(2.0, 0.1, 2.0)),
+        ));
+        let mut physics = Physics::new();
+        simuler(&mut physics, &mut scene, 0.2);
+        vouloir(&mut scene, perso, Vec3::X * 3.0, false);
+        simuler(&mut physics, &mut scene, 1.0);
+        let p = position(&scene, perso);
+        assert!(p.x > 2.5, "il avance sur la marche : {p}");
+        assert!((p.y - 0.2).abs() < 0.05, "les pieds sur la marche : {p}");
+    }
+
+    #[test]
+    fn un_personnage_pousse_une_caisse() {
+        let mut scene = Scene::default();
+        let perso = sol_et_personnage(&mut scene, Vec3::ZERO);
+        let caisse = scene.world.spawn((
+            Transform::from_translation(Vec3::new(1.5, 0.25, 0.0)),
+            RigidBody::dynamic(),
+            Collider::cuboid(Vec3::splat(0.25)).with_density(0.5),
+        ));
+        let mut physics = Physics::new();
+        simuler(&mut physics, &mut scene, 0.3);
+        let avant = position(&scene, caisse);
+        vouloir(&mut scene, perso, Vec3::X * 3.0, false);
+        simuler(&mut physics, &mut scene, 1.0);
+        assert!(
+            position(&scene, caisse).x > avant.x + 0.3,
+            "la caisse a avancé : {}",
+            position(&scene, caisse)
+        );
+    }
+
+    /// Régression : créer un personnage pendant que des objets dynamiques
+    /// reposent les uns sur les autres (la pile de caisses de la démo) ne
+    /// doit pas dérégler rapier (« touching pair not linked in the
+    /// persistent islands »).
+    #[test]
+    fn creer_un_personnage_au_milieu_d_objets_poses() {
+        let mut scene = Scene::default();
+        sol_et_balle(&mut scene);
+        for i in 0..3 {
+            scene.world.spawn((
+                Transform::from_translation(Vec3::new(3.0, 0.25 + 0.5 * i as f32, 0.0)),
+                RigidBody::dynamic(),
+                Collider::cuboid(Vec3::splat(0.25)),
+            ));
+        }
+        let mut physics = Physics::new();
+        // Assez longtemps pour que la pile s'ENDORME (rapier ne simule plus
+        // les objets immobiles) : c'est dans cet état que le bug apparaissait.
+        simuler(&mut physics, &mut scene, 5.0);
+        // Les pieds POSÉS sur la caisse du haut (dessus en y = 1,5), comme
+        // quand on passe en marche au-dessus de la pile.
+        let perso = scene.world.spawn((
+            Transform::from_translation(Vec3::new(3.0, 1.5, 0.0)),
+            RigidBody::kinematic(),
+            Collider::capsule(0.6, 0.3).with_offset(Vec3::Y * 0.9),
+            CharacterController::default(),
+        ));
+        simuler(&mut physics, &mut scene, 0.5);
+        // Une balle lancée vers la pile pendant que le personnage existe.
+        scene.world.spawn((
+            Transform::from_translation(Vec3::new(1.0, 0.5, 0.0)),
+            RigidBody::dynamic().with_velocity(Vec3::X * 10.0),
+            Collider::ball(0.2),
+        ));
+        vouloir(&mut scene, perso, Vec3::NEG_X * 3.0, false);
+        simuler(&mut physics, &mut scene, 2.0);
+        assert!(personnage(&scene, perso).grounded);
+    }
+
+    #[test]
+    fn un_rayon_peut_ignorer_un_corps() {
+        let mut scene = Scene::default();
+        let perso = sol_et_personnage(&mut scene, Vec3::ZERO);
+        let mut physics = Physics::new();
+        physics.step(&mut scene, TIME_STEP);
+        // Depuis les yeux (1,6 m), vers le bas : d'abord la capsule...
+        let yeux = Vec3::Y * 1.6;
+        let hit = physics.cast_ray(yeux, Vec3::NEG_Y, 10.0).unwrap();
+        assert_eq!(hit.entity, perso);
+        // ...sauf si on l'ignore : alors le sol.
+        let hit = physics
+            .cast_ray_excluding(yeux, Vec3::NEG_Y, 10.0, Some(perso))
+            .unwrap();
+        assert_ne!(hit.entity, perso);
+        assert!(hit.point.y.abs() < 1e-3);
+    }
+
+    #[test]
+    fn dessin_d_une_capsule() {
+        let mut scene = Scene::default();
+        scene.world.spawn((
+            Transform::IDENTITY,
+            RigidBody::kinematic(),
+            Collider::capsule(0.6, 0.3),
+        ));
+        let mut physics = Physics::new();
+        physics.step(&mut scene, TIME_STEP);
+        let mut debug = DebugLines::default();
+        physics.debug_draw(&mut debug);
+        // Deux sphères de 3 cercles, et 4 traits verticaux.
+        assert_eq!(debug.line_count(), 2 * 3 * 16 + 4);
     }
 }

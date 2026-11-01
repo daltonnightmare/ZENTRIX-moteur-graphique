@@ -45,13 +45,17 @@
 //! | `F8`                | couper / remettre le son                      |
 //! | `N`                 | ajouter / retirer le champ de stress (4 096 cubes) |
 //! | `L`                 | passer à la nuit (seules les lampes éclairent) / au jour |
+//! | `G`                 | lancer une partie de « chasse aux cristaux » (voir game.rs) |
+//! | `C`                 | passer du vol à la marche (personnage à la première personne, voir player.rs) et inversement ; en marche : `Espace` saute, `Maj` court |
 //! | clic droit (souris capturée) | pousser l'objet visé                  |
 //! | `Échap`             | libérer la souris, puis quitter               |
 
 mod demo;
 mod fly_camera;
+mod game;
 mod inspector;
 mod model;
+mod player;
 
 use std::sync::Arc;
 
@@ -62,7 +66,7 @@ use anyhow::Context;
 use zentrix_audio::{Audio, AudioListener, SoundEmitter};
 use zentrix_core::math::{Mat4, Quat, Vec3};
 use zentrix_core::{Color, FrameProfiler, Image, Transform};
-use zentrix_physics::{Collider, Physics, RigidBody};
+use zentrix_physics::{CharacterController, Collider, Physics, RigidBody};
 use zentrix_platform::{
     Application, Input, KeyCode, MouseButton, Window, WindowConfig, WindowEvent,
     set_cursor_captured,
@@ -74,7 +78,9 @@ use zentrix_ui::UiLayer;
 
 use crate::demo::{Ball, DemoAssets, GROUND_Y, Spin, StressCube};
 use crate::fly_camera::FlyCamera;
+use crate::game::{Game, GameEvent, GameItem};
 use crate::inspector::{Inspector, Perf, Toggles};
+use crate::player::Player;
 
 /// Intervalle de mise à jour du compteur d'images par seconde (en secondes).
 const FPS_REFRESH: f32 = 0.5;
@@ -173,6 +179,8 @@ struct ZentrixApp {
     /// La nuit (touche `L`) : les réglages du jour, gardés pour les
     /// rétablir (intensité du soleil, lumière ambiante, intensité du ciel).
     day: Option<(f32, Color, f32)>,
+    /// La partie de « chasse aux cristaux » (touche `G`).
+    game: Game,
     /// L'animation est-elle en pause ?
     paused: bool,
     /// Demande de fermeture (touche Échap).
@@ -203,6 +211,7 @@ impl ZentrixApp {
             profiler: FrameProfiler::default(),
             stress: false,
             day: None,
+            game: Game::default(),
             paused: false,
             quit_requested: false,
         }
@@ -236,6 +245,52 @@ impl ZentrixApp {
             // hauteur (sinon l'oreille repère tout de suite la répétition).
             let rate = 0.85 + 0.1 * ((self.next_ball as usize + i) % 4) as f32;
             self.audio.play_at(sound, impact.position, volume, rate);
+        }
+    }
+
+    /// Les sons et messages qui accompagnent les événements de la partie.
+    fn play_game_events(&mut self, events: &[GameEvent]) {
+        let impact = self.audio.sound(demo::IMPACT_SOUND);
+        let whoosh = self.audio.sound(demo::LAUNCH_SOUND);
+        for event in events {
+            match *event {
+                GameEvent::Started => {
+                    log::info!(
+                        "Chasse aux cristaux : {} cristaux à ramasser, {} cibles à toucher (B), {} s",
+                        game::CRYSTAL_COUNT,
+                        game::TARGET_COUNT,
+                        game::ROUND_TIME
+                    );
+                    if let Some(sound) = whoosh {
+                        self.audio.play(sound, 0.7, 0.6);
+                    }
+                }
+                // Le choc synthétisé, joué deux fois plus aigu : un « tintement ».
+                GameEvent::Collected { position } => {
+                    if let Some(sound) = impact {
+                        self.audio.play_at(sound, position, 0.9, 2.4);
+                    }
+                }
+                GameEvent::TargetHit { position } => {
+                    if let Some(sound) = impact {
+                        self.audio.play_at(sound, position, 1.0, 0.6);
+                    }
+                }
+                GameEvent::Finished {
+                    score,
+                    perfect,
+                    record,
+                } => {
+                    log::info!(
+                        "Partie terminée : {score} points{}{}",
+                        if perfect { ", sans faute" } else { "" },
+                        if record { " — nouveau record !" } else { "" }
+                    );
+                    if let Some(sound) = whoosh {
+                        self.audio.play(sound, 0.8, 1.4);
+                    }
+                }
+            }
         }
     }
 
@@ -339,6 +394,9 @@ impl ZentrixApp {
         match result {
             Ok(scene) => {
                 self.scene = scene;
+                // Une partie en cours ne survit pas au changement de scène :
+                // on retire aussi les cristaux et cibles que le fichier contenait.
+                self.game.reset(&mut self.scene.world);
                 // Le fichier contient peut-être le champ de stress.
                 self.stress = self
                     .scene
@@ -450,6 +508,23 @@ impl ZentrixApp {
         if input.was_key_pressed(KeyCode::KeyL) {
             self.toggle_night();
         }
+        if input.was_key_pressed(KeyCode::KeyC) {
+            let walking = player::toggle(&mut self.scene.world, &self.physics);
+            log::info!(
+                "{}",
+                if walking {
+                    "Mode marche : ZQSD, Espace = sauter, Maj = courir (C : revenir au vol)"
+                } else {
+                    "Mode vol"
+                }
+            );
+        }
+        if input.was_key_pressed(KeyCode::KeyG)
+            && let Some(assets) = &self.assets
+        {
+            let event = self.game.start(&mut self.scene.world, assets);
+            self.play_game_events(&[event]);
+        }
         if input.was_key_pressed(KeyCode::F8) {
             self.sound_off = !self.sound_off;
             log::info!("Son {}", if self.sound_off { "coupé" } else { "remis" });
@@ -475,7 +550,13 @@ impl ZentrixApp {
             && let Some(eye) = self.camera_transform()
         {
             let forward = eye.rotation * Vec3::NEG_Z;
-            if let Some(hit) = self.physics.cast_ray(eye.translation, forward, 100.0) {
+            // En marche, les yeux sont DANS la capsule du joueur : le rayon
+            // doit l'ignorer.
+            let me = player::find(&self.scene.world);
+            if let Some(hit) = self
+                .physics
+                .cast_ray_excluding(eye.translation, forward, 100.0, me)
+            {
                 self.physics
                     .apply_impulse(hit.entity, forward * 4.0, hit.point);
             }
@@ -666,6 +747,7 @@ impl Application for ZentrixApp {
                     vsync: &mut vsync,
                 };
                 requests = self.inspector.show(ctx, &mut self.scene, toggles, perf);
+                self.game.hud(ctx, self.mouse_captured);
             });
             // Changer de mode d'affichage reconfigure la surface : on ne le
             // fait que si la case a vraiment changé.
@@ -697,8 +779,13 @@ impl Application for ZentrixApp {
             // Grâce au delta time, l'animation a la même vitesse sur toutes les machines.
             demo::spin_system(&mut self.scene.world, dt);
         }
-        // La souris ne fait tourner la vue que si elle est capturée.
-        demo::fly_camera_system(&mut self.scene.world, input, dt, self.mouse_captured);
+        // La souris ne fait tourner la vue que si elle est capturée. En
+        // marche, les touches dirigent le personnage ; en vol, la caméra.
+        if player::find(&self.scene.world).is_some() {
+            player::input_system(&mut self.scene.world, input, self.mouse_captured);
+        } else {
+            demo::fly_camera_system(&mut self.scene.world, input, dt, self.mouse_captured);
+        }
         demo::cleanup_system(&mut self.scene.world);
         self.profiler.lap("systèmes");
 
@@ -708,7 +795,25 @@ impl Application for ZentrixApp {
             self.physics.step(&mut self.scene, dt);
             self.play_impact_sounds();
         }
+        // La caméra rejoint les yeux du personnage, qui vient de bouger.
+        player::camera_follow_system(&mut self.scene.world);
         self.profiler.lap("physique");
+
+        // La partie, APRÈS la physique : elle lit les chocs du pas qui vient
+        // d'être simulé (une balle a-t-elle touché une cible ?).
+        if !self.paused
+            && let (Some(assets), Some(eye)) = (&self.assets, self.camera_transform())
+        {
+            let events = self.game.update(
+                &mut self.scene.world,
+                assets,
+                self.physics.impacts(),
+                eye.translation,
+                dt,
+            );
+            self.play_game_events(&events);
+        }
+        self.profiler.lap("jeu");
 
         // Les positions dans le monde, une fois TOUS les déplacements faits.
         self.scene.update_transforms();
@@ -867,6 +972,9 @@ fn scene_serializer() -> SceneSerializer {
         .register::<FlyCamera>("FlyCamera")
         .register::<Ball>("Ball")
         .register::<StressCube>("StressCube")
+        .register::<GameItem>("GameItem")
+        .register::<Player>("Player")
+        .register::<CharacterController>("CharacterController")
         .register::<RigidBody>("RigidBody")
         .register::<Collider>("Collider")
         .register::<AudioListener>("AudioListener")

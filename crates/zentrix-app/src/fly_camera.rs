@@ -98,14 +98,7 @@ impl FlyCamera {
     ///   ferait tourner la vue) ;
     /// - contrôles **physiques** : `KeyW/A/S/D` = ZQSD en AZERTY, WASD en QWERTY.
     pub fn update(&mut self, transform: &mut Transform, input: &Input, dt: f32, look: bool) {
-        // --- Orientation ------------------------------------------------------
-        if look {
-            let delta = input.mouse_delta();
-            self.yaw += delta.x * self.sensitivity;
-            // La souris vers le bas donne un y positif : on soustrait pour
-            // que pousser la souris vers l'avant lève le regard.
-            self.pitch = (self.pitch - delta.y * self.sensitivity).clamp(-MAX_PITCH, MAX_PITCH);
-        }
+        self.look(transform, input, look);
 
         // --- Vitesse : la molette la multiplie ou la divise par 1,2 par cran --
         let scroll = input.scroll_delta();
@@ -142,7 +135,26 @@ impl FlyCamera {
         // peut pas être normalisé ; on obtient alors simplement zéro.
         // Multiplier par `dt` rend la vitesse indépendante du nombre d'images par seconde.
         transform.translation += direction.normalize_or_zero() * self.speed * boost * dt;
+    }
+
+    /// L'orientation seule : la souris tourne la tête. Utilisée aussi en
+    /// mode marche (voir player.rs), où c'est le personnage qui se déplace.
+    pub fn look(&mut self, transform: &mut Transform, input: &Input, look: bool) {
+        if look {
+            let delta = input.mouse_delta();
+            self.yaw += delta.x * self.sensitivity;
+            // La souris vers le bas donne un y positif : on soustrait pour
+            // que pousser la souris vers l'avant lève le regard.
+            self.pitch = (self.pitch - delta.y * self.sensitivity).clamp(-MAX_PITCH, MAX_PITCH);
+        }
         transform.rotation = self.rotation();
+    }
+
+    /// « Devant », à plat : la direction de la marche. Regarder ses pieds
+    /// ne doit pas ralentir le personnage.
+    pub fn forward_flat(&self) -> Vec3 {
+        let (sin_yaw, cos_yaw) = self.yaw.sin_cos();
+        Vec3::new(sin_yaw, 0.0, -cos_yaw)
     }
 }
 

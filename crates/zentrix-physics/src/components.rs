@@ -73,6 +73,10 @@ pub enum Shape {
     Cuboid { half_extents: Vec3 },
     /// Une sphère.
     Ball { radius: f32 },
+    /// Une capsule verticale : un cylindre de hauteur `2 × half_height`
+    /// terminé par deux demi-sphères de rayon `radius`. La forme classique
+    /// d'un personnage : arrondie en bas, elle glisse sur les bords des marches.
+    Capsule { half_height: f32, radius: f32 },
 }
 
 /// « Cette entité a cette forme de collision. »
@@ -119,6 +123,18 @@ impl Collider {
         }
     }
 
+    /// Une capsule verticale (voir [`Shape::Capsule`]), centrée sur
+    /// l'origine de l'entité : sa hauteur totale est `2 × (half_height + radius)`.
+    pub fn capsule(half_height: f32, radius: f32) -> Self {
+        Self {
+            shape: Shape::Capsule {
+                half_height,
+                radius,
+            },
+            ..Self::cuboid(Vec3::ZERO)
+        }
+    }
+
     pub fn with_offset(mut self, offset: Vec3) -> Self {
         self.offset = offset;
         self
@@ -132,6 +148,63 @@ impl Collider {
     pub fn with_density(mut self, density: f32) -> Self {
         self.density = density;
         self
+    }
+}
+
+/// « Cette entité est un **personnage** » : elle marche, saute, monte les
+/// marches et glisse le long des murs, au lieu de rouler comme une caisse.
+///
+/// Il lui faut aussi un `Transform` (la position de ses **pieds**), un
+/// [`RigidBody::kinematic`] et un [`Collider`] (une capsule, en général,
+/// décalée vers le haut pour que son bas touche les pieds).
+///
+/// Le jeu écrit [`desired_velocity`](Self::desired_velocity) et
+/// [`jump`](Self::jump) ; la physique déplace le personnage pendant
+/// `Physics::step` (contrôleur cinématique de rapier) et met à jour
+/// [`grounded`](Self::grounded) et [`vertical_speed`](Self::vertical_speed).
+///
+/// Pourquoi pas un corps dynamique ? Une capsule dynamique se comporte comme
+/// un objet : elle glisse sur les pentes, rebondit, se fait pousser par une
+/// caisse, accélère lentement. Un personnage doit au contraire obéir
+/// **immédiatement** aux touches : on calcule son déplacement nous-mêmes, en
+/// « sondant » le décor avec sa forme (*shape cast*).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct CharacterController {
+    /// La vitesse voulue, en unités par seconde. Seule la partie
+    /// **horizontale** compte : la verticale vient de la gravité et des sauts.
+    pub desired_velocity: Vec3,
+    /// Le jeu demande un saut. Pris en compte seulement au sol, puis remis
+    /// à `false` par la physique.
+    pub jump: bool,
+    /// Vitesse verticale au départ d'un saut (5 m/s : environ 1,3 m de haut).
+    pub jump_speed: f32,
+    /// Hauteur maximale des marches franchies sans sauter.
+    pub step_height: f32,
+    /// La pente la plus raide que le personnage peut gravir, en radians.
+    pub max_slope: f32,
+    /// Sa masse, en kilogrammes : elle règle la force avec laquelle il pousse
+    /// les objets dynamiques qu'il rencontre.
+    pub mass: f32,
+    /// Écrit par la physique : la vitesse verticale actuelle (positive en
+    /// montant, négative en tombant).
+    pub vertical_speed: f32,
+    /// Écrit par la physique : le personnage touche-t-il le sol ?
+    pub grounded: bool,
+}
+
+impl Default for CharacterController {
+    fn default() -> Self {
+        Self {
+            desired_velocity: Vec3::ZERO,
+            jump: false,
+            jump_speed: 5.0,
+            step_height: 0.35,
+            max_slope: 45f32.to_radians(),
+            mass: 70.0,
+            vertical_speed: 0.0,
+            grounded: false,
+        }
     }
 }
 

@@ -48,6 +48,8 @@ cargo run
 | `F8`                  | Couper / remettre le son                        |
 | `N`                   | Ajouter / retirer le champ de stress (4 096 cubes) |
 | `L`                   | Passer à la nuit (seules les lampes éclairent) / au jour |
+| `G`                   | Lancer une partie de « chasse aux cristaux » (60 s : ramasser les cristaux en passant dessus, toucher les cibles avec `B`) |
+| `C`                   | Passer du vol à la marche (personnage à la première personne) et inversement. En marche : `Z` `Q` `S` `D` pour marcher, `Espace` pour sauter, `Maj` pour courir |
 | `Échap`               | Libérer la souris, puis quitter                 |
 
 La première compilation prend quelques minutes (wgpu est une grosse dépendance). Les suivantes ne prennent que quelques secondes.
